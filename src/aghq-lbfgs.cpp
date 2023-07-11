@@ -811,6 +811,7 @@ List optimizeaghq(
    * past: number of iterations to compare againt for function change convergence
    * max_linesearch: maximum number of line search iterations
    */
+  double tol       = control["tol"];
   double inner_tol = control["inner_tol"];                         // Tolerance for the inner optimization
   int inner_maxitr = control["inner_maxitr"];                // Maximum number of iterations for the inner optimization 
   String method    = control["method"];
@@ -823,13 +824,77 @@ List optimizeaghq(
   // Set up the optimization object
   margloglik nll(modelobj,nn,ww);
   Eigen::VectorXd grad(theta.size());
+  grad.setZero();
+  
+  // Allow for just the gradient and negative log likelihood computation
+  bool onlynllgrad = control["onlynllgrad"];
+  if (onlynllgrad) {
+    double nllval = nll(theta,grad);
+    return List::create(Named("nll") = nllval,Named("grad") = grad);
+  }
+  
+  /**
+   * OPTIMIZATION
+   * Newton or L-BFGS
+   */
+  double val=0.;
+  // Newton
+  if (method == "newton") {
+    nll.aghqnewton(theta);
+    val = nll(theta,grad);
+  } else {
+    LBFGSParam<double> param;
+    param.m = control["bfgshist"];
+    param.delta = control["bfgsdelta"];
+    param.past = control["past"];
+    param.epsilon = control["tol"];
+    param.max_iterations = control["maxitr"];
+    param.max_linesearch = control["max_linesearch"];
+    LBFGSSolver<double,LineSearchNocedalWright> solver(param);
+    
+    // Run the minimization
+    int niter = solver.minimize(nll, theta, val);
+    val = nll(theta,grad);
+    if (method == "both" & (grad.lpNorm<Eigen::Infinity>() > tol)) {
+      // Now compute the newton steps
+      nll.aghqnewton(theta);
+      val = nll(theta,grad);
+    } else {
+      // compute the FD hessian
+      nll.numerichessian(theta);
+    }
+  }
+  /** END OPTIMIZATION **/
+  
+  // WALD Confidence intervals
+  nll.compute_all_sd();
+  Eigen::Matrix<double,Eigen::Dynamic,3> waldints(theta.size(),3);
+  waldints.col(0) = theta - 2*nll.raw_sd;
+  waldints.col(1) = theta;
+  waldints.col(2) = theta + 2*nll.raw_sd;
+  // variance components
+  Eigen::Matrix<double,Eigen::Dynamic,3> waldintsvarcomp(modelobj.d+modelobj.sp,3);
+  // convert back to sigma^2 scale
+  // sigma^2_1
+  waldintsvarcomp(0,1) = exp(nll.vcomp_sd(0,0));
+  waldintsvarcomp(0,0) = exp((nll.vcomp_sd(0,0) - 2*nll.vcomp_sd(0,1)));
+  waldintsvarcomp(0,2) = exp((nll.vcomp_sd(0,0) + 2*nll.vcomp_sd(0,1)));
+  // sigma^2_2
+  waldintsvarcomp(1,1) = exp(nll.vcomp_sd(1,0));
+  waldintsvarcomp(1,0) = exp((nll.vcomp_sd(1,0) - 2*nll.vcomp_sd(1,1)));
+  waldintsvarcomp(1,2) = exp((nll.vcomp_sd(1,0) + 2*nll.vcomp_sd(1,1)));
+  // sigma_12
+  waldintsvarcomp(2,1) = nll.vcomp_sd(2,0);
+  waldintsvarcomp(2,0) = nll.vcomp_sd(2,0) - 2*nll.vcomp_sd(2,1);
+  waldintsvarcomp(2,2) = nll.vcomp_sd(2,0) + 2*nll.vcomp_sd(2,1);
   
   return List::create(Named("method") = method,
-                      Named("theta") = theta
-                      // Named("H") = -nll.get_hessian(),
-                      // Named("betaints") = waldints.block(0,0,4,waldints.cols()),
-                      // Named("sigmaints") = waldintsvarcomp,
-                      // Named("computationtimes") = comptimes
+                      Named("theta") = theta,
+                      Named("H") = -nll.get_hessian(),
+                      Named("betaints") = waldints.block(0,0,4,waldints.cols()),
+                      Named("sigmaints") = waldintsvarcomp,
+                      Named("nll") = val,
+                      Named("grad") = grad
   );
 
 }

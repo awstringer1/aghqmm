@@ -2,12 +2,19 @@
 #' 
 #' Control options for the \code{aghqmm} function, see that function.
 #'
+#' @param ... Used to override default arguments, see Details.
+#' 
+#' @details You can provide options for the following control arguments
+#' to override their defaults:
+#' 
+#' TODO
+#'
 #' @family aghqmm
 #' 
 #' @export
-aghqmm_control <- function() {
+aghqmm_control <- function(...) {
   # default control arguments
-  list(
+  out <- list(
     tol = 1e-08,
     maxitr = 100,
     inner_tol = 1e-08,
@@ -22,6 +29,9 @@ aghqmm_control <- function() {
     iter_EM = 0, # for GLMMadaptive only
     onlynllgrad = FALSE
   )
+  userargs <- list(...)
+  for (arg in names(userargs)) out[arg] <- userargs[arg]
+  out
 }
 
 #' Binary Mixed Model via AGHQ with Exact Gradients
@@ -75,7 +85,7 @@ aghqmm <- function(
   data,
   k=5,
   family=stats::binomial(),
-  method = c("lbfgs","newton","GLMMadaptive","lme4","glmmEP"),
+  method = c("lbfgs","newton","both","GLMMadaptive","lme4","glmmEP"),
   control = aghqmm_control()) {
   
   method <- method[1]
@@ -86,6 +96,11 @@ aghqmm <- function(
   idvar <- names(reterms$reTrms$cnms)[1]
   X <- reterms$X
   Z <- t(reterms$reTrms$Zt)
+  
+  # check if response is 0/1 coded
+  if(!all.equal(sort(unique(data[[response]])),c(0,1))) 
+    stop(paste0("Response should be coded as numeric 0/1, yours is coded as",sort(unique(data[[response]])),". I don't know how to automatically convert it, sorry!"))
+  
   
   modeldata <- with(reterms,list(
     X = X,
@@ -119,10 +134,20 @@ aghqmm <- function(
   betadim <- length(betastart)
   thetastart <- c(betastart,c(0,0,0))
   ustart <- rep(0,d*length(modeldata$id))
-  if (method %in% c("lbfgs","newton")) {
+  if (method %in% c("lbfgs","newton","both")) {
     control$method <- method
     opt <- optimizeaghq(thetastart,ustart,yy,XX,ZZ,nn,ww,control)  
   }
+  
+  if (is.null(opt$nll)) {
+    # add on nll and grad
+    control$onlynllgrad <- TRUE
+    nllandgrad <- optimizeaghq(opt$theta,ustart,yy,XX,ZZ,nn,ww,control)  
+    opt$nll <- nllandgrad$nll
+    opt$grad <- nllandgrad$grad
+  }
+  opt$normgrad <- max(abs(opt$grad)) # infinity norm
+  
   
   opt
 }
