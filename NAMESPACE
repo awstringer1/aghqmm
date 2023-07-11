@@ -1,0 +1,4 @@
+useDynLib(aghqmm, .registration=TRUE)
+importFrom(Rcpp, evalCpp)
+exportPattern("^[[:alpha:]]+")
+import(Matrix)

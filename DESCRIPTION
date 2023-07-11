@@ -1,0 +1,17 @@
+Package: aghqmm
+Type: Package
+Title: Binary Mixed Models using Adaptive Gaussian Quadrature with Exact Gradient Computations
+Version: 0.1.0
+Date: 2023-07-11
+Author: Alex Stringer
+Maintainer: Alex Stringer <alex.stringer@uwaterloo.ca>
+Description: Fit binary mixed models via L-BFGS optimization with exact gradient of the approximate log-marginal likelihood.
+License: GPL (>= 2)
+Imports: Rcpp (>= 1.0.10), 
+         lme4, 
+         mvQuad
+LinkingTo: Rcpp, RcppEigen
+Depends: Matrix
+Suggests: GLMMadaptive, glmmEP, mlmRev
+RoxygenNote: 7.2.1
+Encoding: UTF-8
