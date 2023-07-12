@@ -12,6 +12,6 @@ Imports: Rcpp (>= 1.0.10),
          mvQuad
 LinkingTo: Rcpp, RcppEigen
 Depends: Matrix
-Suggests: GLMMadaptive, glmmEP, mlmRev
+Suggests: GLMMadaptive, glmmEP, mlmRev, fastmatrix
 RoxygenNote: 7.2.1
 Encoding: UTF-8

@@ -9,7 +9,7 @@ aghqmm(
   data,
   k = 5,
   family = stats::binomial(),
-  method = c("lbfgs", "newton", "GLMMadaptive", "lme4", "glmmEP"),
+  method = c("lbfgs", "newton", "both", "GLMMadaptive", "lme4", "glmmEP"),
   control = aghqmm_control()
 )
 }

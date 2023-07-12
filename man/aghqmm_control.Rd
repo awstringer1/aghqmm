@@ -4,10 +4,19 @@
 \alias{aghqmm_control}
 \title{Control options for aghqmm}
 \usage{
-aghqmm_control()
+aghqmm_control(...)
+}
+\arguments{
+\item{...}{Used to override default arguments, see Details.}
 }
 \description{
 Control options for the \code{aghqmm} function, see that function.
+}
+\details{
+You can provide options for the following control arguments
+to override their defaults:
+
+TODO
 }
 \seealso{
 Other aghqmm: 
