@@ -792,7 +792,6 @@ public:
 // [[Rcpp::export]]
 List optimizeaghq(
     Eigen::VectorXd theta,          // Initial guess for theta
-    Eigen::VectorXd u,              // Initial guess for (utheta)
     std::vector<Eigen::VectorXd> y, // Response, list, one vector per group
     std::vector<Eigen::MatrixXd> X, // Fixed effects covariates, list, one matrix per group
     std::vector<Eigen::MatrixXd> Z, // Random effects covariates, list, one matrix per group
@@ -819,6 +818,8 @@ List optimizeaghq(
   // Set up the model object
   int sb = X[0].cols(), d = Z[0].cols(), st = theta.size();
   int sp = st - (d+sb);
+  Eigen::VectorXd u(y.size()*d);
+  u.setZero();
   model modelobj(y,X,Z,control,u,theta.segment(0,sb),theta.segment(sb,d),theta.segment(sb+d,sp));
   
   // Set up the optimization object

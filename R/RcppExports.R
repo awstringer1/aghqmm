@@ -19,7 +19,7 @@
 #' @param nn An \code{Eigen} matrix of dimension \code{k^d x d} containing the product-rule quadrature nodes.
 #' @param ww An \code{Eigen} vector of length \code{k^d} containing the product-rule quadrature weights.
 #' @param control a \code{List} containing control arguments.
-optimizeaghq <- function(theta, u, y, X, Z, nn, ww, control) {
-    .Call(`_aghqmm_optimizeaghq`, theta, u, y, X, Z, nn, ww, control)
+optimizeaghq <- function(theta, y, X, Z, nn, ww, control) {
+    .Call(`_aghqmm_optimizeaghq`, theta, y, X, Z, nn, ww, control)
 }
 

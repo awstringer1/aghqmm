@@ -84,11 +84,11 @@ logmarglik <- function(theta,formula,data,k=5) {
   gg <- mvQuad::createNIGrid(d,'GHe',k)
   nn <- mvQuad::getNodes(gg)
   ww <- mvQuad::getWeights(gg)
-  ustart <- rep(0,d*length(modeldata$id))
+  # ustart <- rep(0,d*length(modeldata$id))
   
   # evaluate and return
   control <- aghqmm_control(onlynllgrad = TRUE)
-  optimizeaghq(theta,ustart,yy,XX,ZZ,nn,ww,control)
+  optimizeaghq(theta,yy,XX,ZZ,nn,ww,control)
 }
 
 
@@ -146,6 +146,8 @@ aghqmm <- function(
   method = c("lbfgs","newton","both","GLMMadaptive","lme4","glmmEP"),
   control = aghqmm_control()) {
   
+  tm <- Sys.time()
+  
   method <- method[1]
   response <- all.vars(formula)[1]
   # formula = y ~ x*t + (t|id)
@@ -191,16 +193,22 @@ aghqmm <- function(
   betastart <- stats::coef(linmod)
   betadim <- length(betastart)
   thetastart <- c(betastart,c(0,0,0))
-  ustart <- rep(0,d*length(modeldata$id))
+  # ustart <- rep(0,d*length(modeldata$id))
+  preptime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
   if (method %in% c("lbfgs","newton","both")) {
+    tm <- Sys.time()
     control$method <- method
-    opt <- optimizeaghq(thetastart,ustart,yy,XX,ZZ,nn,ww,control)  
+    # opt <- optimizeaghq(thetastart,ustart,yy,XX,ZZ,nn,ww,control)  
+    opt <- optimizeaghq(thetastart,yy,XX,ZZ,nn,ww,control)
+    opttime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
   } else if (method == "GLMMadaptive") {
+    tm <- Sys.time()
     mod <- GLMMadaptive::mixed_model(
       fixed = lme4::nobars(formula),
       random = as.formula(paste0("~",lme4::findbars(formula))),
       data = data,
       family = stats::binomial(),
+      initial_values = list(betas = betastart,D = diag(2)),
       control = list(nAGQ = k,update_GH_every=control$update_GH_every,iter_EM = control$iter_EM)
     )
     betaest <- summary(mod)$coef_table[ ,'Estimate']
@@ -227,7 +235,9 @@ aghqmm <- function(
       betaints = betaints,
       sigmaints = sigmaints
     )
+    opttime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
   } else if (method == "lme4") {
+    tm <- Sys.time()
     # NOTE: currently this is only d>=2, so only Laplace available
     mod <- lme4::glmer(formula,data,family,nAGQ = 1)
     ms <- summary(mod)
@@ -247,7 +257,9 @@ aghqmm <- function(
       theta = c(betaest,lme4delta,lme4phi),
       betaints = betaints
     )
+    opttime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
   } else if (method == "glmmEP") {
+    tm <- Sys.time()
     # construct the inputs
     Xf <- modeldata$X
     Xr <- as.matrix(flatten_bdmat(modeldata$Z,modeldata$id,2))
@@ -273,16 +285,30 @@ aghqmm <- function(
       betaints = betaints,
       sigmaints = sigmaints
     )
+    opttime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
   }
   
+  
   if (is.null(opt$nll)) {
+    tm <- Sys.time()
     # add on nll and grad
     control$onlynllgrad <- TRUE
-    nllandgrad <- optimizeaghq(opt$theta,ustart,yy,XX,ZZ,nn,ww,control)  
+    nllandgrad <- optimizeaghq(opt$theta,yy,XX,ZZ,nn,ww,control)  
     opt$nll <- nllandgrad$nll
     opt$grad <- nllandgrad$grad
+    posttime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
   }
   opt$normgrad <- max(abs(opt$grad)) # infinity norm
 
+  # compute comp times according to method
+  if (method %in% c("lbfgs","newton","both")) {
+    comptime <- preptime + opttime
+  } else if (method %in% c("GLMMadaptive","lme4")) {
+    comptime <- opttime + posttime
+  } else if (method == "glmmEP") {
+    comptime <- preptime + opttime + posttime
+  }
+  opt$comptime <- comptime
+  
   opt
 }
