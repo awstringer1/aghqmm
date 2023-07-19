@@ -200,7 +200,9 @@ aghqmm <- function(
     control$method <- method
     # call appropriate function based on the number of random effects
     if (d==1) {
-      opt <- optimizeaghqscalar(thetastart,yy,XX,as.numeric(nn),as.numeric(ww),control) 
+      for (i in 1:100) {
+        opt <- optimizeaghqscalar(thetastart,yy,XX,as.numeric(nn),as.numeric(ww),control) 
+      }
     } else {
       opt <- optimizeaghq(thetastart,yy,XX,ZZ,nn,ww,control)
     }
@@ -212,25 +214,29 @@ aghqmm <- function(
       random = as.formula(paste0("~",lme4::findbars(formula))),
       data = data,
       family = stats::binomial(),
-      initial_values = list(betas = betastart,D = diag(2)),
+      initial_values = list(betas = betastart,D = diag(d)),
       control = list(nAGQ = k,update_GH_every=control$update_GH_every,iter_EM = control$iter_EM)
     )
     betaest <- summary(mod)$coef_table[ ,'Estimate']
     covmatest <- summary(mod)$D
-    sigmasq1est <- covmatest[1,1]
-    sigmasq2est <- covmatest[2,2]
-    covest <- covmatest[2,1]
+    sigmasqest <- diag(covmatest)
+    if (d>1)
+      covest <- covmatest[2,1]
     glmmaldl <- fastmatrix::ldl(solve(covmatest))
     glmmadelta <- log(glmmaldl$d)
-    glmmaphi <- glmmaldl$lower[2,1]
-    confintsbeta <- confint(mod)[ ,c(1,3)]
-    confintssigma <- confint(mod,parm='var-cov')[c(1,3,2),c(1,3)]
-    
+    glmmaphi <- NULL
+    if (d>1)
+      glmmaphi <- glmmaldl$lower[2,1]
+    if (d==1) {
+      confintssigma <- confint(mod,parm='var-cov')[ ,c(1,3),drop=FALSE]
+    } else {
+      confintssigma <- confint(mod,parm='var-cov')[c(1,3,2),c(1,3)]
+    }
     vc <- vcov(mod)
     vcsd <- sqrt(diag(vc))
     betaints <- cbind(betaest - 2*vcsd[1:length(betaest)],betaest,betaest + 2*vcsd[1:length(betaest)])
     
-    sigmaints <- cbind(confintssigma[ ,1],c(sigmasq1est,sigmasq2est,covest),confintssigma[ ,2])
+    sigmaints <- cbind(confintssigma[ ,1],sigmasqest,confintssigma[ ,2])
 
     opt <- list(
       method = "GLMMadaptive",
@@ -254,7 +260,9 @@ aghqmm <- function(
     covmatest <- ms$varcor[[idvar]]
     lme4ldl <- fastmatrix::ldl(solve(covmatest))
     lme4delta <- log(lme4ldl$d)
-    lme4phi <- lme4ldl$lower[2,1]
+    lme4phi <- NULL
+    if (d>1)
+      lme4phi <- lme4ldl$lower[2,1]
     opt <- list(
       method = "lme4",
       theta = c(betaest,lme4delta,lme4phi),
@@ -265,22 +273,32 @@ aghqmm <- function(
     tm <- Sys.time()
     # construct the inputs
     Xf <- modeldata$X
-    Xr <- as.matrix(flatten_bdmat(modeldata$Z,modeldata$id,2))
+    Xr <- as.matrix(flatten_bdmat(modeldata$Z,modeldata$id,d))
     mod <- glmmEP::glmmEP(modeldata$y,Xf,Xr,data[[idvar]])
     betaest <- mod$parameters[1:ncol(Xf),2]
     betaints <- as.matrix(mod$parameters[1:ncol(Xf), ])
     # sigma1^2, sigma2^2, sigma_12
     sigmaints <- mod$parameters[(ncol(Xf)+1):nrow(mod$parameters), ]
-    sigmaints[3, ] <- sigmaints[3, ] * prod(sigmaints[1:2,2]) # corr --> cov
-    sigmaints[1:2, ] <- sigmaints[1:2, ]^2 # variance
+    if (d==1) {
+      sigmaints <- sigmaints^2
+    } else {
+      sigmaints[3, ] <- sigmaints[3, ] * prod(sigmaints[1:2,2]) # corr --> cov
+      sigmaints[1:2, ] <- sigmaints[1:2, ]^2 # variance
+    }
     rownames(sigmaints) <- NULL
     
     # get delta and phi
-    S <- diag(sigmaints[1:2,2])
-    S[2,1] <- sigmaints[3,2]
+    if (d==1) {
+      S <- sigmaints[2]
+      glmmepphi <- NULL
+    } else {
+      S <- diag(sigmaints[1:2,2])
+      S[2,1] <- sigmaints[3,2]
+    }
     glmmepldl <- fastmatrix::ldl(solve(S))
     glmmepdelta <- log(glmmepldl$d)
-    glmmepphi <- glmmepldl$lower[2,1]
+    if (d>1)
+      glmmepphi <- glmmepldl$lower[2,1]
     
     opt <- list(
       method = "glmmEP",
@@ -296,7 +314,11 @@ aghqmm <- function(
     tm <- Sys.time()
     # add on nll and grad
     control$onlynllgrad <- TRUE
-    nllandgrad <- optimizeaghq(opt$theta,yy,XX,ZZ,nn,ww,control)  
+    if (d==1) {
+      nllandgrad <- optimizeaghqscalar(opt$theta,yy,XX,nn,ww,control)
+    } else {
+      nllandgrad <- optimizeaghq(opt$theta,yy,XX,ZZ,nn,ww,control)
+    }
     opt$nll <- nllandgrad$nll
     opt$grad <- nllandgrad$grad
     posttime <- as.numeric(difftime(Sys.time(),tm,units='secs'))

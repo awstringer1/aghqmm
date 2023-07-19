@@ -979,8 +979,6 @@ public:
     st = sb + d; // Dimension of theta
     p = d + st; // Dimension of (u,theta);
     
-    std::cout << "n=" << n << ", sb=" << sb << ", st=" << st << ", p=" << p << std::endl;
-  
     grad.setZero(p);
     step = 0.; // Newton step
     hess.setZero(p,p);
@@ -1210,17 +1208,13 @@ private:
   Vec grad_h_t;          // Gradient taking mode into account
   Vec val_vec;           // Vector of weighted log-likelihood evaluations for a single group
   Scalar Fi;        // Derivative of g with respect to L; F_ij = dg/dL_ij
-  Mat dLinvzmat; // Intermediate matrix of derivatives of the forward solve
   Mat W_L;       // Intermediate weight matrix to be summed to give F
   Mat W_u;       // Intermediate weight matrix to be summed to give dg/du; also storage for gradients
   Vec zA;        // Adapted quadrature points
-  Vec tmpZ;      // Placeholder for quadrature nodes within forward sub algorithm 
   int kd;
-  
   
 public:
   Vec raw_sd; 
-  Mat vcomp_sd;
   scalarmargloglik(scalarmodel& modelobj_, const Vec& nn_, const Vec& ww_) : modelobj(modelobj_), nn(nn_), ww(ww_) {
     Li = 0.;
     kd = ww.size();
@@ -1238,13 +1232,10 @@ public:
     grad_h_t.setZero(modelobj.st);
     val_vec.setZero(kd); 
     Fi = 0.;
-    dLinvzmat.setZero(modelobj.d,modelobj.d*(modelobj.d+1)/2);
     W_L.setZero(kd,1);
     W_u.setZero(kd,modelobj.p);
-    tmpZ.setZero(modelobj.d);
-    
+
     raw_sd.setZero(modelobj.st);
-    vcomp_sd.setZero(modelobj.d + modelobj.sp,2);
   }
   // getters
   Mat get_hessian() {
@@ -1267,50 +1258,50 @@ public:
     grad.setZero();
     /** Set modelobj parameters **/
     modelobj.set_params(theta);
-    
+
     /** Loop over i **/
     bool verbose = false;
     for (int i=0;i<modelobj.n;i++) {
       loglik_tmp = 0.;
       modelobj.inner_optimize_i(i,verbose);
-      // Hessian
-      // TODO: set this within the newton iteration
-      modelobj.hess_i(i,false);
-      Li = sqrt(modelobj.hess(0,0));
-      // Third derivatives
-      modelobj.dHuu_i(i);
-      loglik_tmp = 0.;
-      
-      // Adaptation
-      zA = nn.array() / Li;
-      zA.array() += modelobj.u;
-      
-      // Loop over quadrature points
-      val_vec.setZero();
-      W_L.setZero();
-      for (int j=0;j<kd;j++) {
-        // Joint log-likelihood and gradient evaluation
-        modelobj.loglik_grad_i(i,zA(j));
-        val_vec(j) = -modelobj.nll + log(ww(j)) - log(Li);
-        W_u.row(j) = -modelobj.grad;
-        // "Cholesky" gradient
-        W_L(j,0) = -(1/Li) - W_u(j,0) * nn(j) / (Li*Li);
-      }
-      // Log-likelihood, for scaling
-      loglik_tmp = logsumexp(val_vec);
-      loglik -= loglik_tmp; // negative log-likelihood 
-      /** Collate **/
-      grad_h_ut_noL = vector_sumexp(W_u,val_vec);
-      // get_L_from_vector(Fi,vector_sumexp(W_L,val_vec));
-      // grad_h_L = dgdtheta(Li,Fi,modelobj.dHuu);
-      Fi = vector_sumexp(W_L,val_vec)(0);
-      grad_h_L = Fi * modelobj.dHuu.array() / (2*Li);
-      grad_h_ut = grad_h_L + grad_h_ut_noL;
-      /** Mode derivative **/
-      grad_h_t = grad_h_ut.segment(modelobj.d,modelobj.st) - (modelobj.hess.block(0,modelobj.d,modelobj.d,modelobj.st).transpose()) * (grad_h_ut.segment(0,modelobj.d)) / Li;
-      // grad_h_t = grad_h_ut.segment(modelobj.d,modelobj.st) + (LLt.solve(-modelobj.hess.block(0,modelobj.d,modelobj.d,modelobj.st)).transpose()) * (grad_h_ut.segment(0,modelobj.d));
-      /** Scaling by marginal likelihood **/
-      grad += -grad_h_t * exp(-loglik_tmp);
+    //   // Hessian
+    //   // TODO: set this within the newton iteration
+    //   modelobj.hess_i(i,false);
+    //   Li = sqrt(modelobj.hess(0,0));
+    //   // Third derivatives
+    //   modelobj.dHuu_i(i);
+    //   loglik_tmp = 0.;
+    //   
+    //   // Adaptation
+    //   zA = nn.array() / Li;
+    //   zA.array() += modelobj.u;
+    //   
+    //   // Loop over quadrature points
+    //   val_vec.setZero();
+    //   W_L.setZero();
+    //   for (int j=0;j<kd;j++) {
+    //     // Joint log-likelihood and gradient evaluation
+    //     modelobj.loglik_grad_i(i,zA(j));
+    //     val_vec(j) = -modelobj.nll + log(ww(j)) - log(Li);
+    //     W_u.row(j) = -modelobj.grad;
+    //     // "Cholesky" gradient
+    //     W_L(j,0) = -(1/Li) - W_u(j,0) * nn(j) / (Li*Li);
+    //   }
+    //   // Log-likelihood, for scaling
+    //   loglik_tmp = logsumexp(val_vec);
+    //   loglik -= loglik_tmp; // negative log-likelihood 
+    //   /** Collate **/
+    //   grad_h_ut_noL = vector_sumexp(W_u,val_vec);
+    //   // get_L_from_vector(Fi,vector_sumexp(W_L,val_vec));
+    //   // grad_h_L = dgdtheta(Li,Fi,modelobj.dHuu);
+    //   Fi = vector_sumexp(W_L,val_vec)(0);
+    //   grad_h_L = Fi * modelobj.dHuu.array() / (2*Li);
+    //   grad_h_ut = grad_h_L + grad_h_ut_noL;
+    //   /** Mode derivative **/
+    //   grad_h_t = grad_h_ut.segment(modelobj.d,modelobj.st) - (modelobj.hess.block(0,modelobj.d,modelobj.d,modelobj.st).transpose()) * (grad_h_ut.segment(0,modelobj.d)) / Li;
+    //   // grad_h_t = grad_h_ut.segment(modelobj.d,modelobj.st) + (LLt.solve(-modelobj.hess.block(0,modelobj.d,modelobj.d,modelobj.st)).transpose()) * (grad_h_ut.segment(0,modelobj.d));
+    //   /** Scaling by marginal likelihood **/
+    //   grad += -grad_h_t * exp(-loglik_tmp);
     }
     return loglik;
   }
@@ -1413,71 +1404,75 @@ List optimizeaghqscalar(
   Scalar u = 0.;
   scalarmodel modelobj(y,X,control,u,theta.segment(0,sb),theta(sb));
   
+
   // Set up the optimization object
   scalarmargloglik nll(modelobj,nn,ww);
   Vec grad(theta.size());
   grad.setZero();
   
+  Scalar nllval = nll(theta,grad);
+  return List::create(Named("hess") = modelobj.hess,Named("hessuu") = modelobj.hessuu,Named("nll") = nllval,Named("grad") = grad);
+
   // Allow for just the gradient and negative log likelihood computation
-  bool onlynllgrad = control["onlynllgrad"];
-  if (onlynllgrad) {
-    Scalar nllval = nll(theta,grad);
-    return List::create(Named("nll") = nllval,Named("grad") = grad);
-  }
-  
-  /**
-   * OPTIMIZATION
-   * Newton or L-BFGS
-   */
-  Scalar val=0.;
-  // Newton
-  if (method == "newton") {
-    nll.aghqnewton(theta);
-    val = nll(theta,grad);
-  } else {
-    LBFGSParam<Scalar> param;
-    param.m = control["bfgshist"];
-    param.delta = control["bfgsdelta"];
-    param.past = control["past"];
-    param.epsilon = control["tol"];
-    param.max_iterations = control["maxitr"];
-    param.max_linesearch = control["max_linesearch"];
-    LBFGSSolver<Scalar,LineSearchNocedalWright> solver(param);
-    
-    // Run the minimization
-    int niter = solver.minimize(nll, theta, val);
-    val = nll(theta,grad);
-    if (method == "both" & (grad.lpNorm<Eigen::Infinity>() > tol)) {
-      // Now compute the newton steps
-      nll.aghqnewton(theta);
-      val = nll(theta,grad);
-    } else {
-      // compute the FD hessian
-      nll.numerichessian(theta);
-    }
-  }
-  /** END OPTIMIZATION **/
-  
-  // WALD Confidence intervals
-  nll.compute_all_sd();
-  Eigen::Matrix<Scalar,Eigen::Dynamic,3> waldints(theta.size(),3);
-  waldints.col(0) = theta - 2*nll.raw_sd;
-  waldints.col(1) = theta;
-  waldints.col(2) = theta + 2*nll.raw_sd;
-  // Variance components
-  Vec waldintsvarcomp(3);
-  // theta(st) = log(1/sigma^2)
-  // sigma^2 = exp(-theta(st))
-  waldintsvarcomp(1) = exp(-theta(st));
-  waldintsvarcomp(0) = exp(-(theta(st) - 2*nll.raw_sd(st)));
-  waldintsvarcomp(2) = exp(-(theta(st) + 2*nll.raw_sd(st)));
-  
-  return List::create(Named("method") = method,
-                      Named("theta") = theta,
-                      Named("H") = -nll.get_hessian(),
-                      Named("betaints") = waldints.block(0,0,4,waldints.cols()),
-                      Named("sigmaints") = waldintsvarcomp,
-                      Named("nll") = val,
-                      Named("grad") = grad
-  );
+  // bool onlynllgrad = control["onlynllgrad"];
+  // if (onlynllgrad) {
+  //   Scalar nllval = nll(theta,grad);
+  //   return List::create(Named("nll") = nllval,Named("grad") = grad);
+  // }
+  // 
+  // /**
+  //  * OPTIMIZATION
+  //  * Newton or L-BFGS
+  //  */
+  // Scalar val=0.;
+  // // Newton
+  // if (method == "newton") {
+  //   nll.aghqnewton(theta);
+  //   val = nll(theta,grad);
+  // } else {
+  //   LBFGSParam<Scalar> param;
+  //   param.m = control["bfgshist"];
+  //   param.delta = control["bfgsdelta"];
+  //   param.past = control["past"];
+  //   param.epsilon = control["tol"];
+  //   param.max_iterations = control["maxitr"];
+  //   param.max_linesearch = control["max_linesearch"];
+  //   LBFGSSolver<Scalar,LineSearchNocedalWright> solver(param);
+  //   
+  //   // Run the minimization
+  //   int niter = solver.minimize(nll, theta, val);
+  //   val = nll(theta,grad);
+  //   if (method == "both" & (grad.lpNorm<Eigen::Infinity>() > tol)) {
+  //     // Now compute the newton steps
+  //     nll.aghqnewton(theta);
+  //     val = nll(theta,grad);
+  //   } else {
+  //     // compute the FD hessian
+  //     nll.numerichessian(theta);
+  //   }
+  // }
+  // /** END OPTIMIZATION **/
+  // 
+  // // WALD Confidence intervals
+  // nll.compute_all_sd();
+  // Eigen::Matrix<Scalar,Eigen::Dynamic,3> waldints(theta.size(),3);
+  // waldints.col(0) = theta - 2*nll.raw_sd;
+  // waldints.col(1) = theta;
+  // waldints.col(2) = theta + 2*nll.raw_sd;
+  // // Variance components
+  // Vec waldintsvarcomp(3);
+  // // theta(st) = log(1/sigma^2)
+  // // sigma^2 = exp(-theta(st))
+  // waldintsvarcomp(1) = exp(-theta(st));
+  // waldintsvarcomp(0) = exp(-(theta(st) - 2*nll.raw_sd(st)));
+  // waldintsvarcomp(2) = exp(-(theta(st) + 2*nll.raw_sd(st)));
+  // 
+  // return List::create(Named("method") = method,
+  //                     Named("theta") = theta,
+  //                     Named("H") = -nll.get_hessian(),
+  //                     Named("betaints") = waldints.block(0,0,4,waldints.cols()),
+  //                     Named("sigmaints") = waldintsvarcomp,
+  //                     Named("nll") = val,
+  //                     Named("grad") = grad
+  // );
 }
