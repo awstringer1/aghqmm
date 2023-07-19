@@ -192,14 +192,18 @@ aghqmm <- function(
   linmod <- stats::glm(lme4::nobars(formula),data,family=family)
   betastart <- stats::coef(linmod)
   betadim <- length(betastart)
-  thetastart <- c(betastart,c(0,0,0))
+  thetastart <- c(betastart,rep(0,d*(d+1)/2))
   # ustart <- rep(0,d*length(modeldata$id))
   preptime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
   if (method %in% c("lbfgs","newton","both")) {
     tm <- Sys.time()
     control$method <- method
-    # opt <- optimizeaghq(thetastart,ustart,yy,XX,ZZ,nn,ww,control)  
-    opt <- optimizeaghq(thetastart,yy,XX,ZZ,nn,ww,control)
+    # call appropriate function based on the number of random effects
+    if (d==1) {
+      opt <- optimizeaghqscalar(thetastart,yy,XX,as.numeric(nn),as.numeric(ww),control) 
+    } else {
+      opt <- optimizeaghq(thetastart,yy,XX,ZZ,nn,ww,control)
+    }
     opttime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
   } else if (method == "GLMMadaptive") {
     tm <- Sys.time()
@@ -238,8 +242,7 @@ aghqmm <- function(
     opttime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
   } else if (method == "lme4") {
     tm <- Sys.time()
-    # NOTE: currently this is only d>=2, so only Laplace available
-    mod <- lme4::glmer(formula,data,family,nAGQ = 1)
+    mod <- lme4::glmer(formula,data,family,nAGQ = k)
     ms <- summary(mod)
     betaest <- ms$coefficients[ ,1]
     betasd <- ms$coefficients[ ,2]

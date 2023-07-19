@@ -29,9 +29,26 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// optimizeaghqscalar
+List optimizeaghqscalar(Vec theta, std::vector<Vec> y, std::vector<Mat> X, Vec nn, Vec ww, List control);
+RcppExport SEXP _aghqmm_optimizeaghqscalar(SEXP thetaSEXP, SEXP ySEXP, SEXP XSEXP, SEXP nnSEXP, SEXP wwSEXP, SEXP controlSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Vec >::type theta(thetaSEXP);
+    Rcpp::traits::input_parameter< std::vector<Vec> >::type y(ySEXP);
+    Rcpp::traits::input_parameter< std::vector<Mat> >::type X(XSEXP);
+    Rcpp::traits::input_parameter< Vec >::type nn(nnSEXP);
+    Rcpp::traits::input_parameter< Vec >::type ww(wwSEXP);
+    Rcpp::traits::input_parameter< List >::type control(controlSEXP);
+    rcpp_result_gen = Rcpp::wrap(optimizeaghqscalar(theta, y, X, nn, ww, control));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_aghqmm_optimizeaghq", (DL_FUNC) &_aghqmm_optimizeaghq, 7},
+    {"_aghqmm_optimizeaghqscalar", (DL_FUNC) &_aghqmm_optimizeaghqscalar, 6},
     {NULL, NULL, 0}
 };
 

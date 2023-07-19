@@ -786,12 +786,12 @@ public:
 //' Fit an AGHQ model via L-BFGS optimization
 //' 
 //' This function is a C++ implementation of the exact gradient-based optimization
-//' of the AGHQ approximate log-marginal likelihood in a binary mixed model.
+//' of the AGHQ approximate log-marginal likelihood in a binary mixed model with multivariate
+//' Normal random effects. A similar but more efficient implementation is given
+//' for the special case of random intercepts, see below.
 //' 
 //' @param theta Starting value for the outer parameter, containing regression
 //' coefficients and variance components on the log-Cholesky scale.
-//' @param u Starting value for the inner parameter, representing the mode of the
-//' random effects vector.
 //' @param y A \code{std::vector} of length \code{m} \code{Eigen} vectors of lengths \code{m_i},
 //' containing the responses: one vector of within-group observations per group.
 //' @param X A \code{std::vector} of length \code{m} \code{Eigen} matrices of dimensions \code{m_i x p},
@@ -801,6 +801,8 @@ public:
 //' @param nn An \code{Eigen} matrix of dimension \code{k^d x d} containing the product-rule quadrature nodes.
 //' @param ww An \code{Eigen} vector of length \code{k^d} containing the product-rule quadrature weights.
 //' @param control a \code{List} containing control arguments.
+//' 
+//' @family optimizeaghqmm
 // [[Rcpp::export]]
 List optimizeaghq(
     Vec theta,          // Initial guess for theta
@@ -976,6 +978,8 @@ public:
     sd = 1;
     st = sb + d; // Dimension of theta
     p = d + st; // Dimension of (u,theta);
+    
+    std::cout << "n=" << n << ", sb=" << sb << ", st=" << st << ", p=" << p << std::endl;
   
     grad.setZero(p);
     step = 0.; // Newton step
@@ -1183,5 +1187,297 @@ public:
   }
 };
 
+/**
+ * Marginal log likelihood, for scalar random effects
+ */
+class scalarmargloglik {
+  
+private:
+  scalarmodel& modelobj;      // Model object, above
+  const Vec& nn;  // Quadrature nodes
+  const Vec& ww;  // Quadrature weights
+  int evalcount=0, idx=0;
+  
+  Scalar Li; // Was previously Cholesky, now it's just sqrt(2nd derivative)
+  
+  Scalar aghqnll;
+  Vec aghqgrad, aghqgradperturb, aghqthetaperturb, aghqstep;
+  Mat aghqhess;
+  
+  Vec grad_h_L;          // Gradient of Cholesky term with respect to theta
+  Vec grad_h_ut_noL;     // Gradient ignoring L
+  Vec grad_h_ut;         // Gradient wrt (u,theta) ignoring mode
+  Vec grad_h_t;          // Gradient taking mode into account
+  Vec val_vec;           // Vector of weighted log-likelihood evaluations for a single group
+  Scalar Fi;        // Derivative of g with respect to L; F_ij = dg/dL_ij
+  Mat dLinvzmat; // Intermediate matrix of derivatives of the forward solve
+  Mat W_L;       // Intermediate weight matrix to be summed to give F
+  Mat W_u;       // Intermediate weight matrix to be summed to give dg/du; also storage for gradients
+  Vec zA;        // Adapted quadrature points
+  Vec tmpZ;      // Placeholder for quadrature nodes within forward sub algorithm 
+  int kd;
+  
+  
+public:
+  Vec raw_sd; 
+  Mat vcomp_sd;
+  scalarmargloglik(scalarmodel& modelobj_, const Vec& nn_, const Vec& ww_) : modelobj(modelobj_), nn(nn_), ww(ww_) {
+    Li = 0.;
+    kd = ww.size();
+    
+    aghqgrad.setZero(modelobj.st);
+    aghqgradperturb.setZero(modelobj.st);
+    aghqthetaperturb.setZero(modelobj.st);
+    aghqstep.setZero(modelobj.st);
+    aghqhess.setZero(modelobj.st,modelobj.st);
+    
+    zA.setZero(kd);
+    grad_h_L.setZero(modelobj.st);
+    grad_h_ut_noL.setZero(modelobj.p);
+    grad_h_ut.setZero(modelobj.p);
+    grad_h_t.setZero(modelobj.st);
+    val_vec.setZero(kd); 
+    Fi = 0.;
+    dLinvzmat.setZero(modelobj.d,modelobj.d*(modelobj.d+1)/2);
+    W_L.setZero(kd,1);
+    W_u.setZero(kd,modelobj.p);
+    tmpZ.setZero(modelobj.d);
+    
+    raw_sd.setZero(modelobj.st);
+    vcomp_sd.setZero(modelobj.d + modelobj.sp,2);
+  }
+  // getters
+  Mat get_hessian() {
+    return aghqhess;
+  }
+  // wald intervals
+  void compute_all_sd() {
+    // compute the sd for wald intervals for raw and transformed params
+    Mat covmatfull = -aghqhess.inverse();
+    raw_sd = covmatfull.diagonal().cwiseSqrt();
+    // Note: don't need special computations for the variance components, since
+    // there is now only delta = log(1/sigma^2) so can just return Wald
+    // intervals via transformation
+  }
+  Scalar operator()(const Vec& theta,Vec& grad) {
+    // Overwrite grad with gradient at theta
+    // Return negative log likelihood
+    evalcount++;
+    Scalar loglik = 0., loglik_tmp = 0., logdet = 0.;
+    grad.setZero();
+    /** Set modelobj parameters **/
+    modelobj.set_params(theta);
+    
+    /** Loop over i **/
+    bool verbose = false;
+    for (int i=0;i<modelobj.n;i++) {
+      loglik_tmp = 0.;
+      modelobj.inner_optimize_i(i,verbose);
+      // Hessian
+      // TODO: set this within the newton iteration
+      modelobj.hess_i(i,false);
+      Li = sqrt(modelobj.hess(0,0));
+      // Third derivatives
+      modelobj.dHuu_i(i);
+      loglik_tmp = 0.;
+      
+      // Adaptation
+      zA = nn.array() / Li;
+      zA.array() += modelobj.u;
+      
+      // Loop over quadrature points
+      val_vec.setZero();
+      W_L.setZero();
+      for (int j=0;j<kd;j++) {
+        // Joint log-likelihood and gradient evaluation
+        modelobj.loglik_grad_i(i,zA(j));
+        val_vec(j) = -modelobj.nll + log(ww(j)) - log(Li);
+        W_u.row(j) = -modelobj.grad;
+        // "Cholesky" gradient
+        W_L(j,0) = -(1/Li) - W_u(j,0) * nn(j) / (Li*Li);
+      }
+      // Log-likelihood, for scaling
+      loglik_tmp = logsumexp(val_vec);
+      loglik -= loglik_tmp; // negative log-likelihood 
+      /** Collate **/
+      grad_h_ut_noL = vector_sumexp(W_u,val_vec);
+      // get_L_from_vector(Fi,vector_sumexp(W_L,val_vec));
+      // grad_h_L = dgdtheta(Li,Fi,modelobj.dHuu);
+      Fi = vector_sumexp(W_L,val_vec)(0);
+      grad_h_L = Fi * modelobj.dHuu.array() / (2*Li);
+      grad_h_ut = grad_h_L + grad_h_ut_noL;
+      /** Mode derivative **/
+      grad_h_t = grad_h_ut.segment(modelobj.d,modelobj.st) - (modelobj.hess.block(0,modelobj.d,modelobj.d,modelobj.st).transpose()) * (grad_h_ut.segment(0,modelobj.d)) / Li;
+      // grad_h_t = grad_h_ut.segment(modelobj.d,modelobj.st) + (LLt.solve(-modelobj.hess.block(0,modelobj.d,modelobj.d,modelobj.st)).transpose()) * (grad_h_ut.segment(0,modelobj.d));
+      /** Scaling by marginal likelihood **/
+      grad += -grad_h_t * exp(-loglik_tmp);
+    }
+    return loglik;
+  }
+  // Numeric hessian by forward difference
+  void numerichessian(Vec& theta) {
+    // hessian of aghq log likelihood via finite difference
+    
+    // evaluate loglikelihood and gradient
+    aghqnll = (*this)(theta,aghqgrad);
+    // compute the hessian
+    aghqgradperturb.setZero();
+    aghqhess.setZero();
+    for (int j=0;j<theta.size();j++) {
+      // Perturb in the jth dimension
+      aghqthetaperturb = theta;
+      aghqthetaperturb(j) += modelobj.h;
+      // Evaluate the gradient
+      aghqnll = (*this)(aghqthetaperturb,aghqgradperturb);
+      aghqhess.col(j) = (aghqgrad-aghqgradperturb)/modelobj.h;
+    }
+  }
+  // Newton step
+  void aghqnewtonstep(Vec& aghqstep, Vec& theta) {
+    // overwrite aghqstep
+    
+    // evaluate the hessian and gradient
+    numerichessian(theta);
+    // overwrite the step
+    aghqstep = aghqhess.ldlt().solve(aghqgrad); // NEGATIVE hessian --> NEGATIVE gradient!!
+  }
+  // Newton optimization
+  void aghqnewton(Vec& theta) {
+    // overwrite theta with theta-hat
+    int itr=0;	
+    while(true) {
+      // compute the step
+      aghqnewtonstep(aghqstep,theta);
+      // step halving
+      while(aghqstep.norm()>GLOBAL_MAXSTEP) aghqstep /= 2.; 
+      theta += aghqstep;
+      if (aghqgrad.norm() < modelobj.tol | itr > modelobj.maxitr) break;
+      itr++;
+    }
+  }
+}; 
 
 
+/**
+ * Main function for SCALAR random effects
+ * Read in data from R, perform the mixed model computations,
+ * and return results in a list.
+ */
+//' Fit an AGHQ model via L-BFGS optimization
+//' 
+//' This function is a C++ implementation of the exact gradient-based optimization
+//' of the AGHQ approximate log-marginal likelihood in a binary mixed model with 
+//' scalar random intercepts. This is a special, efficient implementation of the general procedure
+//' for multivariate Normal random effects; see below.
+//' 
+//' @param theta Starting value for the outer parameter, containing regression
+//' coefficients and variance components on the log-Cholesky scale.
+//' @param y A \code{std::vector} of length \code{m} \code{Eigen} vectors of lengths \code{m_i},
+//' containing the responses: one vector of within-group observations per group.
+//' @param X A \code{std::vector} of length \code{m} \code{Eigen} matrices of dimensions \code{m_i x p},
+//' representing the design matrices for the fixed effects variables.
+//' @param nn An \code{Eigen} vector of length \code{k} containing the univariate quadrature nodes.
+//' @param ww An \code{Eigen} vector of length \code{k} containing the univariate quadrature weights.
+//' @param control a \code{List} containing control arguments.
+//' 
+//' @family optimizeaghqmm
+// [[Rcpp::export]]
+List optimizeaghqscalar(
+    Vec theta,          // Initial guess for theta
+    std::vector<Vec> y, // Response, list, one vector per group
+    std::vector<Mat> X, // Fixed effects covariates, list, one matrix per group
+    Vec nn,             // Matrix of base quadrature nodes
+    Vec ww,             // Matrix of base quadrature weights
+    List control                    // List of control parameters   
+) {
+  // Extract control arguments
+  /* Control arguments:
+   * tol: tolerance for outer BFGS optimization
+   * inner_tol: tolerance for inner newton optimization
+   * maxitr: maximum iterations of outer BFGS optimization
+   * inner_maxitr: maximum iterations of inner Newton optimization
+   * bfgshist: number of iterations of gradient information to store for Hessian approximation
+   * delta: convergence parameter for function change
+   * past: number of iterations to compare againt for function change convergence
+   * max_linesearch: maximum number of line search iterations
+   */
+  Scalar tol       = control["tol"];
+  Scalar inner_tol = control["inner_tol"];                         // Tolerance for the inner optimization
+  int inner_maxitr = control["inner_maxitr"];                // Maximum number of iterations for the inner optimization 
+  String method    = control["method"];
+  
+  // Set up the model object
+  int sb = X[0].cols(), d = 1, st = theta.size();
+  int sp = st - (d+sb);
+  // initial u
+  Scalar u = 0.;
+  scalarmodel modelobj(y,X,control,u,theta.segment(0,sb),theta(sb));
+  
+  // Set up the optimization object
+  scalarmargloglik nll(modelobj,nn,ww);
+  Vec grad(theta.size());
+  grad.setZero();
+  
+  // Allow for just the gradient and negative log likelihood computation
+  bool onlynllgrad = control["onlynllgrad"];
+  if (onlynllgrad) {
+    Scalar nllval = nll(theta,grad);
+    return List::create(Named("nll") = nllval,Named("grad") = grad);
+  }
+  
+  /**
+   * OPTIMIZATION
+   * Newton or L-BFGS
+   */
+  Scalar val=0.;
+  // Newton
+  if (method == "newton") {
+    nll.aghqnewton(theta);
+    val = nll(theta,grad);
+  } else {
+    LBFGSParam<Scalar> param;
+    param.m = control["bfgshist"];
+    param.delta = control["bfgsdelta"];
+    param.past = control["past"];
+    param.epsilon = control["tol"];
+    param.max_iterations = control["maxitr"];
+    param.max_linesearch = control["max_linesearch"];
+    LBFGSSolver<Scalar,LineSearchNocedalWright> solver(param);
+    
+    // Run the minimization
+    int niter = solver.minimize(nll, theta, val);
+    val = nll(theta,grad);
+    if (method == "both" & (grad.lpNorm<Eigen::Infinity>() > tol)) {
+      // Now compute the newton steps
+      nll.aghqnewton(theta);
+      val = nll(theta,grad);
+    } else {
+      // compute the FD hessian
+      nll.numerichessian(theta);
+    }
+  }
+  /** END OPTIMIZATION **/
+  
+  // WALD Confidence intervals
+  nll.compute_all_sd();
+  Eigen::Matrix<Scalar,Eigen::Dynamic,3> waldints(theta.size(),3);
+  waldints.col(0) = theta - 2*nll.raw_sd;
+  waldints.col(1) = theta;
+  waldints.col(2) = theta + 2*nll.raw_sd;
+  // Variance components
+  Vec waldintsvarcomp(3);
+  // theta(st) = log(1/sigma^2)
+  // sigma^2 = exp(-theta(st))
+  waldintsvarcomp(1) = exp(-theta(st));
+  waldintsvarcomp(0) = exp(-(theta(st) - 2*nll.raw_sd(st)));
+  waldintsvarcomp(2) = exp(-(theta(st) + 2*nll.raw_sd(st)));
+  
+  return List::create(Named("method") = method,
+                      Named("theta") = theta,
+                      Named("H") = -nll.get_hessian(),
+                      Named("betaints") = waldints.block(0,0,4,waldints.cols()),
+                      Named("sigmaints") = waldintsvarcomp,
+                      Named("nll") = val,
+                      Named("grad") = grad
+  );
+}
