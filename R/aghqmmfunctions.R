@@ -200,9 +200,7 @@ aghqmm <- function(
     control$method <- method
     # call appropriate function based on the number of random effects
     if (d==1) {
-      for (i in 1:100) {
-        opt <- optimizeaghqscalar(thetastart,yy,XX,as.numeric(nn),as.numeric(ww),control) 
-      }
+      opt <- optimizeaghqscalar(thetastart,yy,XX,as.numeric(nn),as.numeric(ww),control) 
     } else {
       opt <- optimizeaghq(thetastart,yy,XX,ZZ,nn,ww,control)
     }
