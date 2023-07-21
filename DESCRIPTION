@@ -9,7 +9,9 @@ Description: Fit binary mixed models via L-BFGS optimization with exact gradient
 License: GPL (>= 2)
 Imports: Rcpp (>= 1.0.10), 
          lme4, 
-         mvQuad
+         mvQuad,
+         mvtnorm,
+         methods
 LinkingTo: Rcpp, RcppEigen
 Depends: Matrix
 Suggests: GLMMadaptive, glmmEP, mlmRev, fastmatrix

@@ -32,7 +32,7 @@
 simulate_data <- function(m,n,beta,S) {
   # generate the random effects
   if (!is.matrix(S)) {
-    u <- rnorm(m,0,sqrt(S))
+    u <- stats::rnorm(m,0,sqrt(S))
   } else {
     u <- mvtnorm::rmvnorm(m,sigma = S)
     u <- as.numeric(t(u))
@@ -53,12 +53,12 @@ simulate_data <- function(m,n,beta,S) {
     ff <- y ~ x*t + (t|id)
     df <- data.frame(id=id,x=x,t=t,y=0)
   }
-  reterms <- lme4::glFormula(ff,data=df,family=binomial) # TODO: update this for other families
+  reterms <- lme4::glFormula(ff,data=df,family=stats::binomial) # TODO: update this for other families
   X <- reterms$X
   Z <- t(reterms$reTrms$Zt)
   eta <- as.numeric(X %*% beta + Z %*% u)
   pp <- 1 / (1 + exp(-eta))
-  df$y <- rbinom(m*n,1,pp)
+  df$y <- stats::rbinom(m*n,1,pp)
   
   df
 }

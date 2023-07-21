@@ -45,7 +45,8 @@ TODO
 \examples{
 library(mlmRev)
 data("Contraception")
-aghqmm::aghqmm(use ~ age + urban + (age|district),data=Contraception)
+Contraception$response <- as.numeric(Contraception$use)-1
+aghqmm::aghqmm(response ~ age + (age|district),data=Contraception)
 
 \dontrun{
 ## Not run

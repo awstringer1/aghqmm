@@ -117,7 +117,8 @@ logmarglik <- function(theta,formula,data,k=5) {
 #' @examples 
 #' library(mlmRev)
 #' data("Contraception")
-#' aghqmm::aghqmm(use ~ age + urban + (age|district),data=Contraception)
+#' Contraception$response <- as.numeric(Contraception$use)-1
+#' aghqmm::aghqmm(response ~ age + (age|district),data=Contraception)
 #' 
 #' \dontrun{
 #' ## Not run
@@ -209,7 +210,7 @@ aghqmm <- function(
     tm <- Sys.time()
     mod <- GLMMadaptive::mixed_model(
       fixed = lme4::nobars(formula),
-      random = as.formula(paste0("~",lme4::findbars(formula))),
+      random = stats::as.formula(paste0("~",lme4::findbars(formula))),
       data = data,
       family = stats::binomial(),
       initial_values = list(betas = betastart,D = diag(d)),
@@ -226,22 +227,19 @@ aghqmm <- function(
     if (d>1)
       glmmaphi <- glmmaldl$lower[2,1]
     if (d==1) {
-      confintssigma <- confint(mod,parm='var-cov')[ ,c(1,3),drop=FALSE]
+      confintssigma <- stats::confint(mod,parm='var-cov')[ , ,drop=FALSE]
     } else {
-      confintssigma <- confint(mod,parm='var-cov')[c(1,3,2),c(1,3)]
+      confintssigma <- stats::confint(mod,parm='var-cov')[c(1,3,2), ]
     }
-    vc <- vcov(mod)
+    vc <- stats::vcov(mod)
     vcsd <- sqrt(diag(vc))
     betaints <- cbind(betaest - 2*vcsd[1:length(betaest)],betaest,betaest + 2*vcsd[1:length(betaest)])
-    
-    sigmaints <- cbind(confintssigma[ ,1],sigmasqest,confintssigma[ ,2])
-
     opt <- list(
       method = "GLMMadaptive",
       theta = c(betaest,glmmadelta,glmmaphi),
       H = solve(vc),
       betaints = betaints,
-      sigmaints = sigmaints
+      sigmaints = confintssigma
     )
     opttime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
   } else if (method == "lme4") {

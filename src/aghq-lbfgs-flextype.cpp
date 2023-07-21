@@ -762,11 +762,6 @@ public:
     // overwrite theta with theta-hat
     int itr=0;	
     while(true) {
-      if (modelobj.verbose & (itr < 3)) {
-        std::cout << "aghq newton iteration " << itr << ", step = " << aghqstep.transpose() << ", new theta  = " << theta.transpose() << ", gradnorm = " << aghqgrad.norm() << std::endl;
-        std::cout << "aghqgrad: " << aghqgrad.transpose() << std::endl;
-        std::cout << "aghqhess: " << aghqhess.transpose() << std::endl;
-      }
       // compute the step
       aghqnewtonstep(aghqstep,theta);
       // step halving
