@@ -28,7 +28,8 @@ aghqmm_control <- function(...) {
     method = "lbfgs",
     iter_EM = 0, # for GLMMadaptive only
     update_GH_every = 1, # for GLMMadaptive only
-    onlynllgrad = FALSE
+    onlynllgrad = FALSE,
+    nllgradk = NULL # Compute the nll and grad approximations at an alternate value of k?
   )
   userargs <- list(...)
   for (arg in names(userargs)) out[arg] <- userargs[arg]
@@ -306,28 +307,31 @@ aghqmm <- function(
   }
   
   
-  if (is.null(opt$nll)) {
-    tm <- Sys.time()
-    # add on nll and grad
-    control$onlynllgrad <- TRUE
-    if (d==1) {
-      nllandgrad <- optimizeaghqscalar(opt$theta,yy,XX,nn,ww,control)
-    } else {
-      nllandgrad <- optimizeaghq(opt$theta,yy,XX,ZZ,nn,ww,control)
-    }
-    opt$nll <- nllandgrad$nll
-    opt$grad <- nllandgrad$grad
-    posttime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
+  tm <- Sys.time()
+  # add on nll and grad at a potentially more accurate value of k
+  control$onlynllgrad <- TRUE
+  # re-calculate the grid at a potentially more accurate value of k
+  if (!is.null(control$nllgradk)) {
+    gg <- mvQuad::createNIGrid(d,'GHe',control$nllgradk)
+    nn <- mvQuad::getNodes(gg)
+    ww <- mvQuad::getWeights(gg)
   }
-  opt$normgrad <- max(abs(opt$grad)) # infinity norm
-
+  if (d==1) {
+    nllandgrad <- optimizeaghqscalar(opt$theta,yy,XX,nn,ww,control)
+  } else {
+    nllandgrad <- optimizeaghq(opt$theta,yy,XX,ZZ,nn,ww,control)
+  }
+  opt$nll <- nllandgrad$nll
+  opt$grad <- nllandgrad$grad
+  posttime <- as.numeric(difftime(Sys.time(),tm,units='secs')) # not counted
+  opt$normgrad_infinity <- max(abs(opt$grad)) # infinity norm
+  opt$normgrad_2 <- sqrt(sum((opt$grad)^2)) # 2 norm
+  
   # compute comp times according to method
-  if (method %in% c("lbfgs","newton","both")) {
+  if (method %in% c("lbfgs","newton","both","glmmEP")) {
     comptime <- preptime + opttime
   } else if (method %in% c("GLMMadaptive","lme4")) {
-    comptime <- opttime + posttime
-  } else if (method == "glmmEP") {
-    comptime <- preptime + opttime + posttime
+    comptime <- opttime
   }
   opt$comptime <- comptime
   

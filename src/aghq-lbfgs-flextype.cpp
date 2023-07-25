@@ -841,7 +841,7 @@ List optimizeaghq(
   bool onlynllgrad = control["onlynllgrad"];
   if (onlynllgrad) {
     Scalar nllval = nll(theta,grad);
-    return List::create(Named("nll") = nllval,Named("grad") = grad);
+    return List::create(Named("theta") = theta,Named("nll") = nllval,Named("grad") = grad);
   }
   
   /**
@@ -907,7 +907,6 @@ List optimizeaghq(
                       Named("nll") = val,
                       Named("grad") = grad
   );
-
 }
 
 /**
@@ -1417,7 +1416,7 @@ List optimizeaghqscalar(
   bool onlynllgrad = control["onlynllgrad"];
   if (onlynllgrad) {
     Scalar nllval = nll(theta,grad);
-    return List::create(Named("nll") = nllval,Named("grad") = grad);
+    return List::create(Named("theta") = theta,Named("nll") = nllval,Named("grad") = grad);
   }
 
   /**
