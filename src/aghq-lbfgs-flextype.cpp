@@ -840,7 +840,8 @@ List optimizeaghq(
   // Allow for just the gradient and negative log likelihood computation
   bool onlynllgrad = control["onlynllgrad"];
   if (onlynllgrad) {
-    Scalar nllval = nll(theta,grad);
+    Scalar nllval = 0.;
+    nllval = nll(theta,grad);
     return List::create(Named("theta") = theta,Named("nll") = nllval,Named("grad") = grad);
   }
   
@@ -865,15 +866,14 @@ List optimizeaghq(
     
     // Run the minimization
     int niter = solver.minimize(nll, theta, val);
-    val = nll(theta,grad);
     if (method == "both" & (grad.lpNorm<Eigen::Infinity>() > tol)) {
       // Now compute the newton steps
       nll.aghqnewton(theta);
-      val = nll(theta,grad);
     } else {
       // compute the FD hessian
       nll.numerichessian(theta);
     }
+    val = nll(theta,grad);
   }
   /** END OPTIMIZATION **/
   
