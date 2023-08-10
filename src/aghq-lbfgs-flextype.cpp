@@ -103,6 +103,16 @@ public:
       }
     }
   }
+  // Get data, for testing
+  Mat get_Xi(int i) {
+    return X[i];
+  }
+  Mat get_Zi(int i) {
+    return Z[i];
+  }
+  Mat get_yi(int i) {
+    return y[i];
+  }
   // Constructor
   model(const std::vector<Vec>& y_,
         const std::vector<Mat>& X_,
@@ -670,15 +680,9 @@ public:
     bool verbose = false;
     for (int i=0;i<modelobj.n;i++) {
       loglik_tmp = 0.;
-      //// Inner Optimization
-      //if (std::find(std::begin(ITOPRINT),std::end(ITOPRINT),i) != std::end(ITOPRINT)) {
-      //	verbose = true;
-      //} else {
-      //	verbose = false;
-      //}
+      // Inner Optimization
       modelobj.inner_optimize_i(i,verbose);
       // Hessian
-      // TODO: set this within the newton iteration
       modelobj.hess_i(i,false);
       LLt.compute(modelobj.hess.block(0,0,modelobj.d,modelobj.d));
       Li = LLt.matrixL();
@@ -688,7 +692,6 @@ public:
       loglik_tmp = 0.;
       for (int j=0;j<modelobj.d;j++)
         logdet += log(Li(j,j));
-      //loglik_tmp -= log(Li(j,j));
       
       // Adaptation
       zA = Li.triangularView<Eigen::Lower>().solve(nn.transpose());
@@ -1405,12 +1408,15 @@ List optimizeaghqscalar(
   
   // TESTING:
   // Scalar nllval = nll(theta,grad);
-  // return List::create(Named("hess") = modelobj.hess,
-  //                     Named("hessuu") = modelobj.hessuu,
-  //                     Named("u") = modelobj.u,
-  //                     Named("dHuu") = modelobj.dHuu,
-  //                     Named("nll") = nllval,
-  //                     Named("grad") = grad);
+  // std::cout << "nll: " << nllval << std::endl;
+  // return List::create(Named("tmp") = 0);
+    // Named("hess") = modelobj.hess,
+    // Named("hessuu") = modelobj.hessuu,
+    // Named("u") = modelobj.u,
+    // Named("dHuu") = modelobj.dHuu,
+    // Named("nll") = 0
+    // Named("grad") = grad
+  // );
 
   // Allow for just the gradient and negative log likelihood computation
   bool onlynllgrad = control["onlynllgrad"];
@@ -1436,6 +1442,8 @@ List optimizeaghqscalar(
     param.epsilon = control["tol"];
     param.max_iterations = control["maxitr"];
     param.max_linesearch = control["max_linesearch"];
+    param.ftol = control["ftol"];
+    param.wolfe = control["wolfe"];
     LBFGSSolver<Scalar,LineSearchNocedalWright> solver(param);
 
     // Run the minimization

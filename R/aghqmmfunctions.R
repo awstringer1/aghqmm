@@ -25,6 +25,8 @@ aghqmm_control <- function(...) {
     bfgsdelta = 1e-06,
     past = 3,
     max_linesearch = 100,
+    ftol = 1e-04,
+    wolfe = 0.9,
     method = "lbfgs",
     iter_EM = 0, # for GLMMadaptive only
     update_GH_every = 1, # for GLMMadaptive only
@@ -181,6 +183,11 @@ aghqmm <- function(
     row_id <- with(modeldata,sum(id[1:i]) + 1 - id[i]):with(modeldata,sum(id[1:i]))
     col_id <- (1 + (i-1)*d):(i*d)
     ZZ[[i]] <- as.matrix(modeldata$Z[row_id,col_id])
+    # as.matrix will produce a column matrix if a numeric vector is provided
+    # but we want a row matrix
+    # just fix this manually
+    if (length(yy[[i]]) == 1)
+      ZZ[[i]] <- t(ZZ[[i]])
     colnames(ZZ[[i]]) <- NULL
   }
   
@@ -202,7 +209,7 @@ aghqmm <- function(
     control$method <- method
     # call appropriate function based on the number of random effects
     if (d==1) {
-      opt <- optimizeaghqscalar(thetastart,yy,XX,as.numeric(nn),as.numeric(ww),control) 
+      opt <- optimizeaghqscalar(thetastart,yy,XX,as.numeric(nn),as.numeric(ww),control)
     } else {
       opt <- optimizeaghq(thetastart,yy,XX,ZZ,nn,ww,control)
     }
