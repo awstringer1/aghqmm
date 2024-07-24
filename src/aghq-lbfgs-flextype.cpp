@@ -1,4 +1,4 @@
-// AGHQ marginal likelihood and gradient
+  // AGHQ marginal likelihood and gradient
 
 
 /** Include */
@@ -869,7 +869,7 @@ List optimizeaghq(
     
     // Run the minimization
     int niter = solver.minimize(nll, theta, val);
-    if (method == "both" & (grad.lpNorm<Eigen::Infinity>() > tol)) {
+    if (method == "both" && (grad.lpNorm<Eigen::Infinity>() > tol)) {
       // Now compute the newton steps
       nll.aghqnewton(theta);
     } else {
@@ -905,7 +905,8 @@ List optimizeaghq(
   return List::create(Named("method") = method,
                       Named("theta") = theta,
                       Named("H") = -nll.get_hessian(),
-                      Named("betaints") = waldints.block(0,0,4,waldints.cols()),
+                      //Named("betaints") = waldints.block(0,0,4,waldints.cols()),
+                      Named("betaints") = waldints.block(0,0,X[0].cols(),waldints.cols()),
                       Named("sigmaints") = waldintsvarcomp,
                       Named("nll") = val,
                       Named("grad") = grad
@@ -1191,7 +1192,7 @@ private:
   scalarmodel& modelobj;      // Model object, above
   const Vec& nn;  // Quadrature nodes
   const Vec& ww;  // Quadrature weights
-  int evalcount=0, idx=0;
+  int evalcount=0;
   
   Scalar Li; // Was previously Cholesky, now it's just sqrt(2nd derivative)
   
@@ -1449,7 +1450,7 @@ List optimizeaghqscalar(
     // Run the minimization
     int niter = solver.minimize(nll, theta, val);
     val = nll(theta,grad);
-    if (method == "both" & (grad.lpNorm<Eigen::Infinity>() > tol)) {
+    if (method == "both" && (grad.lpNorm<Eigen::Infinity>() > tol)) {
       // Now compute the newton steps
       nll.aghqnewton(theta);
       val = nll(theta,grad);
@@ -1466,18 +1467,19 @@ List optimizeaghqscalar(
   waldints.col(0) = theta - 2*nll.raw_sd;
   waldints.col(1) = theta;
   waldints.col(2) = theta + 2*nll.raw_sd;
+  
   // Variance components
   Vec waldintsvarcomp(3);
   // theta(st) = log(1/sigma^2)
   // sigma^2 = exp(-theta(st))
-  waldintsvarcomp(1) = exp(-theta(st));
-  waldintsvarcomp(0) = exp(-(theta(st) - 2*nll.raw_sd(st)));
-  waldintsvarcomp(2) = exp(-(theta(st) + 2*nll.raw_sd(st)));
-
+  waldintsvarcomp(1) = exp(-theta(st-1));
+  waldintsvarcomp(2) = exp(-(theta(st-1) - 2*nll.raw_sd(st-1)));
+  waldintsvarcomp(0) = exp(-(theta(st-1) + 2*nll.raw_sd(st-1)));
+  
   return List::create(Named("method") = method,
                       Named("theta") = theta,
                       Named("H") = -nll.get_hessian(),
-                      Named("betaints") = waldints.block(0,0,4,waldints.cols()),
+                      Named("betaints") = waldints.block(0,0,X[0].cols(),waldints.cols()),
                       Named("sigmaints") = waldintsvarcomp,
                       Named("nll") = val,
                       Named("grad") = grad
