@@ -12,8 +12,8 @@ Imports: Rcpp (>= 1.0.10),
          mvQuad,
          mvtnorm,
          methods
-LinkingTo: Rcpp, RcppEigen
+LinkingTo: Rcpp, RcppEigen (== 0.3.3.9.3)
 Depends: Matrix
 Suggests: GLMMadaptive, glmmEP, mlmRev, fastmatrix
-RoxygenNote: 7.2.1
+RoxygenNote: 7.3.1
 Encoding: UTF-8

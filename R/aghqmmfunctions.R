@@ -229,6 +229,7 @@ aghqmm <- function(
     sigmasqest <- diag(covmatest)
     if (d>1)
       covest <- covmatest[2,1]
+    stopifnot(require(fastmatrix, quietly = TRUE))
     glmmaldl <- fastmatrix::ldl(solve(covmatest))
     glmmadelta <- log(glmmaldl$d)
     glmmaphi <- NULL
@@ -299,6 +300,7 @@ aghqmm <- function(
       S <- diag(sigmaints[1:2,2])
       S[2,1] <- sigmaints[3,2]
     }
+    stopifnot(require(fastmatrix, quietly = TRUE))
     glmmepldl <- fastmatrix::ldl(solve(S))
     glmmepdelta <- log(glmmepldl$d)
     if (d>1)
@@ -311,33 +313,44 @@ aghqmm <- function(
       sigmaints = sigmaints
     )
     opttime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
+  } else if (method == "glmmTMB") {
+    if (k != 1) stop(paste0("You chose method = 'glmmTMB' which applies the Laplace approximation, i.e. k = 1. However, you asked for k = ", k, ". This is not compatible with glmmTMB."))
+    tm <- Sys.time()
+    mod <- suppressWarnings(glmmTMB::glmmTMB(formula = formula, data = data, family = stats::binomial(), REML = TRUE))
+    opttime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
+    # TODO: return results. Not doing this now since I don't advocate using the Laplace approximation at all; this
+    # was included to compare speed.
+    opt <- list(
+      method = "glmmTMB"
+    )
   }
-  
   
   tm <- Sys.time()
   # add on nll and grad at a potentially more accurate value of k
-  control$onlynllgrad <- TRUE
-  # re-calculate the grid at a potentially more accurate value of k
-  if (!is.null(control$nllgradk)) {
-    gg <- mvQuad::createNIGrid(d,'GHe',control$nllgradk)
-    nn <- mvQuad::getNodes(gg)
-    ww <- mvQuad::getWeights(gg)
+  if (method != "glmmTMB") {
+    control$onlynllgrad <- TRUE
+    # re-calculate the grid at a potentially more accurate value of k
+    if (!is.null(control$nllgradk)) {
+      gg <- mvQuad::createNIGrid(d,'GHe',control$nllgradk)
+      nn <- mvQuad::getNodes(gg)
+      ww <- mvQuad::getWeights(gg)
+    }
+    if (d==1) {
+      nllandgrad <- optimizeaghqscalar(opt$theta,yy,XX,nn,ww,control)
+    } else {
+      nllandgrad <- optimizeaghq(opt$theta,yy,XX,ZZ,nn,ww,control)
+    }
+    opt$nll <- nllandgrad$nll
+    opt$grad <- nllandgrad$grad
+    posttime <- as.numeric(difftime(Sys.time(),tm,units='secs')) # not counted
+    opt$normgrad_infinity <- max(abs(opt$grad)) # infinity norm
+    opt$normgrad_2 <- sqrt(sum((opt$grad)^2)) # 2 norm
   }
-  if (d==1) {
-    nllandgrad <- optimizeaghqscalar(opt$theta,yy,XX,nn,ww,control)
-  } else {
-    nllandgrad <- optimizeaghq(opt$theta,yy,XX,ZZ,nn,ww,control)
-  }
-  opt$nll <- nllandgrad$nll
-  opt$grad <- nllandgrad$grad
-  posttime <- as.numeric(difftime(Sys.time(),tm,units='secs')) # not counted
-  opt$normgrad_infinity <- max(abs(opt$grad)) # infinity norm
-  opt$normgrad_2 <- sqrt(sum((opt$grad)^2)) # 2 norm
   
   # compute comp times according to method
   if (method %in% c("lbfgs","newton","both","glmmEP")) {
     comptime <- preptime + opttime
-  } else if (method %in% c("GLMMadaptive","lme4")) {
+  } else if (method %in% c("GLMMadaptive", "lme4", "glmmTMB")) {
     comptime <- opttime
   }
   opt$comptime <- comptime
