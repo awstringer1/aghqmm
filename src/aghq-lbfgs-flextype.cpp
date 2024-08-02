@@ -192,19 +192,12 @@ public:
     bool incr = false;
     for (int k=0;k<p;k++) {
       if (d-i != 0) Rcpp::Rcout << "k + 1 = " << k + 1 << ", d - i = " << d - i << ", (k+1) % (d-i) = " << (k+1) % (d-i) << std::endl;
-      if (d-i == 0) {
-        Rcpp::Rcout << "d = " << d << ", i = " << i << std::endl;
-        incr = true;
-      } else if ((k+1) % (d-i) == 0) {
-        // Note: (k+1) % (d-i) throws a runtime error with g++ but not clang++ if d-i == 0.
-        // i++;
-        // j=i+1;
-        incr = true;
-      }
-      if (incr) {
-        i++;
-        j=i+1;
-        incr = false;
+      if (d-i != 0) {
+        if ((k+1) % (d-i) == 0) {
+          // Note: (k+1) % (d-i) throws a runtime error with g++ but not clang++ if d-i == 0.
+          i++;
+          j=i+1;
+        }
       }
       if (j == l)
         SuD[l](i,k) = 1.;
