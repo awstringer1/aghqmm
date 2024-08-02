@@ -192,8 +192,6 @@ public:
     bool incr = false;
     for (int k=0;k<p;k++) {
       Rcpp::Rcout << "k + 1 = " << k + 1 << ", d - i = " << d - i << ", (k+1) % (d-i) = " << (k+1) % (d-i) << std::endl;
-      
-      incr = false;
       if (d-i == 0) {
         incr = true;
       } else if ((k+1) % (d-i) == 0) {
@@ -205,6 +203,7 @@ public:
       if (incr) {
         i++;
         j=i+1;
+        incr = false;
       }
       if (j == l)
         SuD[l](i,k) = 1.;
