@@ -191,7 +191,10 @@ public:
     int i=0,j=1;
     for (int k=0;k<p;k++) {
       Rcpp::Rcout << "k + 1 = " << k + 1 << ", d - i = " << d - i << ", (k+1) % (d-i) = " << (k+1) % (d-i) << std::endl;
-      if ((k+1) % (d-i) == 0) {
+      if (d - i == 0) {
+        i++;
+        j=i+1;
+      } else if ((k+1) % (d-i) == 0) {
         i++;
         j=i+1;
       }
