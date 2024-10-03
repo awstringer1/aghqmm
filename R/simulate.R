@@ -62,3 +62,37 @@ simulate_data <- function(m,n,beta,S) {
   
   df
 }
+
+# Simulate data with a covariate that varies across groups
+simulate_data_nonconstant <- function(m,n,beta,S) {
+  # generate the random effects
+  if (!is.matrix(S)) {
+    u <- stats::rnorm(m,0,sqrt(S))
+  } else {
+    u <- mvtnorm::rmvnorm(m,sigma = S)
+    u <- as.numeric(t(u))
+  }
+  
+  # covariates
+  id <- rep(1:m,each=n)
+  x <- rnorm(length(id))
+  t <- rep(seq(-3,3,length.out=n),m)
+
+  # This part is needed for simulation but will be repeated within the model fitting function too
+  if (!is.matrix(S)) {
+    ff <- y ~ x + (1|id)
+    df <- data.frame(id=id,x=x,y=0)
+  } else{
+    ff <- y ~ x*t + (t|id)
+    df <- data.frame(id=id,x=x,t=t,y=0)
+  }
+  reterms <- lme4::glFormula(ff,data=df,family=stats::binomial) # TODO: update this for other families
+  X <- reterms$X
+  Z <- t(reterms$reTrms$Zt)
+  eta <- as.numeric(X %*% beta + Z %*% u)
+  pp <- 1 / (1 + exp(-eta))
+  df$y <- stats::rbinom(m*n,1,pp)
+  
+  df
+}
+
