@@ -20,6 +20,7 @@ TODO
 }
 \seealso{
 Other aghqmm: 
+\code{\link{aghqgamm}()},
 \code{\link{aghqmm}()}
 }
 \concept{aghqmm}

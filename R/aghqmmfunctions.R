@@ -357,3 +357,94 @@ aghqmm <- function(
   
   opt
 }
+
+#' Binary Generalized Additive Mixed Model via AGHQ with Exact Gradients
+#' 
+#' Fit a binary generalized additive mixed model using AGHQ with exact gradients of the
+#' approximate log-marginal likelihood.
+#' 
+#' @param smoothformula An R formula of the form \code{y ~ s(x, bs = "bs", k = 20)} compatible with
+#' \code{mgcv::gam}; see that function for details.
+#' @param glmmformula An R mixed model formula pf the form \code{y ~ x*t + (t|id)},
+#' compatible with \code{lme4::glmer}; see that function for details.
+#' @param data A \code{data.frame} containing the variables found in \code{formula}.
+#' @param k Order of the adaptive quadrature. In 1 dimension, \code{k} is the number of
+#' points; in d-dimensions there are \code{k^d} total points.
+#' @param control Output of \code{aghqmm_control()}, see that function.
+#' 
+#' @details TODO
+#' 
+#' @return A list containing elements: TODO
+#'
+#' @family aghqmm
+#'
+aghqgamm <- function(
+  formula,
+  data,
+  k=5,
+  control = aghqmm_control()) {
+  
+  tm <- Sys.time()
+
+  ## Fit the GAM required for smoothing parameter estimation ##
+  thegam <- mgcv::gam(
+    smoothformula,
+    data = data,
+    family = binomial(),
+    method = "REML"
+  )
+
+  S <- thegam$smooth[[1]]$S[[1]] # Scaled penalty matrix
+  lambda <- thegam$sp # Scaled smoothing parameter
+  penmat <- rbind(
+    0, cbind(0, lambda * S)
+  ) # Add row/column of zeroes for the intercept
+  # So now the penalty is beta^T penmat beta
+  betastart <- coef(thegam) # Includes intercept
+
+  response <- all.vars(glmmformula)[1]
+  reterms <- lme4::glFormula(formula,data=data,family=stats::binomial) # TODO: update this for other families
+  idvar <- names(reterms$reTrms$cnms)[1]
+  
+  # check if response is 0/1 coded
+  if(!all.equal(sort(unique(data[[response]])),c(0,1))) 
+    stop(paste0("Response should be coded as numeric 0/1, yours is coded as",sort(unique(data[[response]])),". I don't know how to automatically convert it, sorry!"))
+  
+  # Spline design matrix, includes linear constraints
+  X <- model.matrix(thegam)
+  # TODO: allow for covariates in both formulas, or check this at least
+  
+  modeldata <- with(reterms,list(
+    X = X,
+    y = data[[response]],
+    group = data[[idvar]],
+    id = as.numeric(table(data[[idvar]]))
+  ))
+  
+  # Prepare the data for the likelihood functions
+  yy <- with(modeldata,split(y,group))
+  XX <- with(modeldata,lapply(split(X,group),matrix,ncol=ncol(X)))
+  d <- length(Reduce(c,reterms$reTrms$cnms)) # NOTE: not really tested
+
+  # Quadrature
+  gg <- mvQuad::createNIGrid(d,'GHe',k)
+  nn <- mvQuad::getNodes(gg)
+  ww <- mvQuad::getWeights(gg)
+  
+  # Optimize
+  pardim <- ncol(modeldata$X) + 1
+  betadim <- length(betastart)
+  thetastart <- c(betastart, 0)
+  # ustart <- rep(0,d*length(modeldata$id))
+  preptime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
+  tm <- Sys.time()
+  control$method <- method
+  # New function optimizegammscalar: identical except it adds the penalty to 
+  opt <- optimizegammscalar(thetastart, yy, XX, S, as.numeric(nn), as.numeric(ww), control)
+  opttime <- as.numeric(difftime(Sys.time(),tm,units='secs'))
+  
+  comptime <- preptime + opttime
+  opt$comptime <- comptime
+  
+  opt
+}

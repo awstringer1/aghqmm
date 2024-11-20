@@ -47,3 +47,25 @@ optimizeaghqscalar <- function(theta, y, X, nn, ww, control) {
     .Call(`_aghqmm_optimizeaghqscalar`, theta, y, X, nn, ww, control)
 }
 
+#' Fit an AGHQ model via L-BFGS optimization
+#' 
+#' This function is a C++ implementation of the exact gradient-based optimization
+#' of the AGHQ approximate log-marginal likelihood in a binary mixed model with 
+#' scalar random intercepts. This is a special, efficient implementation of the general procedure
+#' for multivariate Normal random effects; see below.
+#' 
+#' @param theta Starting value for the outer parameter, containing regression
+#' coefficients and variance components on the log-Cholesky scale.
+#' @param y A \code{std::vector} of length \code{m} \code{Eigen} vectors of lengths \code{m_i},
+#' containing the responses: one vector of within-group observations per group.
+#' @param X A \code{std::vector} of length \code{m} \code{Eigen} matrices of dimensions \code{m_i x p},
+#' representing the design matrices for the fixed effects variables.
+#' @param nn An \code{Eigen} vector of length \code{k} containing the univariate quadrature nodes.
+#' @param ww An \code{Eigen} vector of length \code{k} containing the univariate quadrature weights.
+#' @param control a \code{List} containing control arguments.
+#' 
+#' @family optimizeaghqmm
+optimizegammscalar <- function(theta, y, X, S, nn, ww, control) {
+    .Call(`_aghqmm_optimizegammscalar`, theta, y, X, S, nn, ww, control)
+}
+

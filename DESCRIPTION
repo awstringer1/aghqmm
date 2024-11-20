@@ -11,7 +11,8 @@ Imports: Rcpp (>= 1.0.10),
          lme4, 
          mvQuad,
          mvtnorm,
-         methods
+         methods,
+         mgcv
 LinkingTo: Rcpp, RcppEigen (>= 0.3.4.0.0)
 Depends: Matrix
 Suggests: GLMMadaptive, glmmEP, mlmRev, fastmatrix

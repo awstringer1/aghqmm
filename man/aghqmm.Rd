@@ -66,6 +66,7 @@ glmmEP(as.numeric(Contraception$use)-1,X,Z,idvec) # note: singular
 }
 \seealso{
 Other aghqmm: 
+\code{\link{aghqgamm}()},
 \code{\link{aghqmm_control}()}
 }
 \concept{aghqmm}

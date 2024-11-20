@@ -1489,3 +1489,576 @@ List optimizeaghqscalar(
                       Named("grad") = grad
   );
 }
+
+/**
+ * Generalized additive mixed models
+ * Just copy everything for now and add the small parts required
+ */
+
+class scalarmodelgamm {
+private:
+  // Data 
+  const std::vector<Vec>& y;  // Response, length m, each vector length m_i
+  const std::vector<Mat>& X;  // Group fixed effect design matrices, length m, dimensions m_i x p
+  // Temporary
+  Scalar tmp = 0.;
+  int itr = 0;
+  Eigen::Vector2i idx;
+  // Control params
+  const List control;
+  
+public:
+  // Parameters
+  // Vec u; 								// Full mode, length N*d (N=num groups, d=random effect dimension)
+  Scalar u; 								// Group mode, length d (N=num groups, d=random effect dimension)
+  Vec beta;							// Regression coefficients
+  Scalar delta;            // log(1/sigma^2)
+  Mat S;                      // Smoothing penalty matrix already multiplied by smoothing parameter
+
+  
+  // Dimensions
+  int n, d, sb, sd, sp, p, st;
+  
+  // Intermediate quantities
+  std::vector<Vec> eta, etagrad;
+  Eigen::VectorXi ni;
+  Mat hess;
+  Scalar hessuu, gradu, step;
+  Vec grad, dHuu;
+  std::vector<Mat> etahess;
+  Scalar nll;
+  
+  // Control parameters- make public
+  int maxitr;
+  Scalar tol, h;
+  bool verbose;
+  
+  // Set parameters
+  // Take in theta and set beta, delta, phi
+  void set_params(const Vec& theta) {
+    beta = theta.segment(0,sb);
+    delta = theta(sb); // theta = (beta1...betap,delta)
+  }
+  // Constructor
+  scalarmodelgamm(const std::vector<Vec>& y_,
+        const std::vector<Mat>& X_,
+        const Mat S_,
+        const List control_,
+        Scalar u_,
+        Vec beta_,
+        Scalar delta_) : 
+    y(y_), X(X_), S(S_), control(control_), u(u_), beta(beta_), delta(delta_) {
+    // Initialize dimensions
+    n = y.size(); // Number of groups
+    d = 1; // Number of random effects parameters
+    sb = beta.size();
+    sd = 1;
+    st = sb + d; // Dimension of theta
+    p = d + st; // Dimension of (u,theta);
+    
+    grad.setZero(p);
+    step = 0.; // Newton step
+    hess.setZero(p,p);
+    gradu = 0.;
+    hessuu = 0.;
+    
+    eta.resize(n);
+    etagrad.resize(n);
+    etahess.resize(n);
+    dHuu.setZero(p);
+    ni.resize(n);
+    for (int i=0;i<n;i++) {
+      ni(i) = y[i].size();
+      eta[i].setZero(ni(i));
+      etagrad[i].setZero(ni(i));
+      etahess[i].setZero(ni(i),ni(i));
+    }
+    
+    // Extract control parameters
+    tol = control["tol"];
+    maxitr = control["maxitr"];
+    h = control["h"];
+    verbose = control["verbose"];
+  }
+  
+  // Normal log density
+  Scalar normal_logdens(int i,Scalar u) {
+    Scalar out = -0.5*d*log(2*3.14159236) + delta/2.;
+    out -= 0.5 * exp(delta) * u*u;
+    return out;
+  }
+  Scalar normal_logdens(int i) {
+    return normal_logdens(i,u);
+  }
+  void normal_grad(int i,Scalar u,bool only_u) {
+    // Gradient of NEGATIVE log RE density
+    // increment u segment
+    grad(0) += exp(delta); 
+    if (!only_u) {
+      // no beta segment, it remains zero
+      // increment delta segment
+      for (int j=0;j<d;j++) {
+        grad(d+sb) -= 0.5 * (1. - exp(delta)*u*u);
+      }
+    }
+  }
+  void normal_grad(int i,bool only_u) {
+    normal_grad(i,u,only_u);
+  }
+  void normal_grad(int i) {
+    normal_grad(i,u,false);
+  }
+  
+  void normal_hess(int i,bool only_u) {
+    // NEGATIVE hessian
+    // (u,u) index
+    hess(0,0) = exp(delta);
+    // (delta,delta) index
+    hess(d+sb,d+sb) = 0.5 * exp(delta) * u*u;
+    // (u,delta) cross
+    hess(0,d+sb) = exp(delta) * u;
+    hess(d+sb,0) = hess(0,d+sb);
+    // NOTE: it's not a 2x2 matrix b/c of beta, but beta does not appear here.
+  }
+  // Log likelihood
+  Scalar loglik_i(int i,Scalar u) {
+    // Compute the log-likelihood for group i
+    eta[i] = X[i]*beta;
+    eta[i].array() += u;
+    Scalar out=0;
+    for (int j=0;j<ni(i);j++) {
+      out += y[i](j)*eta[i](j) - log1p(exp(eta[i](j)));
+    }
+
+    out += normal_logdens(i,u);
+    
+    return -out; // Negative log-likelihood
+  }
+  Scalar loglik_i(int i) {
+    return loglik_i(i,u);
+  }
+  // Gradient
+  void grad_i(int i,Scalar u,bool only_u) {
+    grad.setZero();
+    normal_grad(i,u,only_u);
+    
+    //eta[i] = X[i]*beta + Z[i]*u.segment(d*i,d);
+    eta[i] = X[i]*beta;
+    eta[i].array() += u;
+    for (int j=0;j<ni(i);j++) {
+      etagrad[i](j) = -y[i](j) + 1. / (1. + exp(-eta[i](j)));
+    }	
+    // Increment u
+    grad(0) += etagrad[i].sum();
+    if (!only_u) {
+      // Increment beta
+      grad.segment(d,sb) += (X[i].transpose()) * etagrad[i];
+    }
+  }
+  void grad_i(int i,bool only_u) {
+    return grad_i(i,u,only_u);
+  }
+  // Log likelihood and gradient together
+  void loglik_grad_i(int i,Scalar u) {
+    grad.setZero();
+    eta[i] = X[i]*beta;
+    eta[i].array() += u;
+    nll = 0;
+    for (int j=0;j<ni(i);j++) {
+      nll -= y[i](j)*eta[i](j) - log1p(exp(eta[i](j)));
+      etagrad[i](j) = -y[i](j) + 1. / (1. + exp(-eta[i](j)));
+    }
+    grad(0) += etagrad[i].sum();
+    grad.segment(d,sb) += (X[i].transpose()) * etagrad[i];
+    
+    // Normal
+    // value
+    nll += 0.5*exp(delta)*u*u;
+    nll -= -0.5*d*log(2*3.14159236) + delta/2.;
+    // u
+    grad(0) += exp(delta)*u;
+    // delta
+    grad(d+sb) -= 0.5 * (1. - exp(delta)*u*u);
+  }
+  // Hessian
+  void hess_i(int i,bool only_u) {
+    hess.setZero();
+    normal_hess(i,only_u);
+    // eta[i] = X[i]*beta + Z[i]*u.segment(d*i,d);
+    eta[i] = X[i]*beta;
+    eta[i].array() += u;
+    for (int j=0;j<ni(i);j++) {
+      tmp = exp(eta[i](j)) / (1. + exp(eta[i](j)));
+      etahess[i](j,j) = tmp * (1.- tmp);
+    }
+    // (u,u) block
+    hess(0,0) += etahess[i].sum();
+    // (beta,beta) block
+    hess.block(d,d,sb,sb) += (X[i].transpose()) * (etahess[i] * X[i]);
+    // (u,beta) cross blocks
+    hess.block(0,d,d,sb) += (etahess[i] * X[i]).colwise().sum();
+    hess.block(d,0,sb,d) = hess.block(0,d,d,sb).transpose();
+  }
+  // Inner optimization
+  void newton_step(int i) {
+    // directly compute a single newton step, efficiently
+    // requires g and H; these share some quantities though
+    // also, only requires the u segment/(u,u) block
+    gradu = 0.;
+    hessuu = 0.;
+    
+    eta[i] = X[i]*beta;
+    eta[i].array() += u;
+    for (int j=0;j<ni(i);j++) {
+      etagrad[i](j) = -y[i](j) + 1. / (1. + exp(-eta[i](j)));
+      tmp = exp(eta[i](j)) / (1. + exp(eta[i](j)));
+      etahess[i](j,j) = tmp * (1.- tmp);
+    }	
+    
+    gradu += etagrad[i].sum();
+    hessuu += etahess[i].sum();
+    
+    // normal
+    
+    gradu += exp(delta)*u;
+    hessuu += exp(delta);
+    
+    step = -gradu / sqrt(hessuu);
+  }
+  void inner_optimize_i(int i,bool verbose) {
+    // compute the newton steps directly
+    itr = 0;
+    while(true) {
+      // compute the step
+      newton_step(i);
+      // step halving
+      while(step*step>GLOBAL_MAXSTEP) step /= 2.; 
+      // u.segment(i*d,d) += step;
+      u += step;
+      if (abs(gradu) < tol | itr > maxitr) break;
+      itr++;
+    }
+  }
+  
+  // Third derivatives...
+  void dHuu_i(int i) {
+    dHuu.setZero();
+    eta[i] = X[i]*beta;
+    eta[i].array() += u;
+    for (int j=0;j<ni(i);j++) {
+      tmp = exp(eta[i](j)) / (1. + exp(eta[i](j)));
+      etagrad[i](j) = tmp * (1.- tmp) * (1. - 2.*tmp);
+    }
+    // u
+    etahess[i].diagonal() = etagrad[i].array();
+    dHuu(0) = etahess[i].sum();
+    // beta
+    for (int j=0;j<sb;j++) {
+      etahess[i].diagonal() = etagrad[i].array() * X[i].col(j).array();
+      dHuu(d+j) = etahess[i].sum();
+    }
+    // delta
+    dHuu(sb+1) = exp(delta);
+  }
+};
+
+/**
+ * Marginal log likelihood, for scalar random effects
+ */
+class scalarmargloglikgamm {
+  
+private:
+  scalarmodelgamm& modelobj;      // Model object, above
+  const Vec& nn;  // Quadrature nodes
+  const Vec& ww;  // Quadrature weights
+  int evalcount=0;
+  
+  Scalar Li; // Was previously Cholesky, now it's just sqrt(2nd derivative)
+  
+  Scalar aghqnll;
+  Vec aghqgrad, aghqgradperturb, aghqthetaperturb, aghqstep;
+  Mat aghqhess;
+  
+  Vec grad_h_L;          // Gradient of Cholesky term with respect to theta
+  Vec grad_h_ut_noL;     // Gradient ignoring L
+  Vec grad_h_ut;         // Gradient wrt (u,theta) ignoring mode
+  Vec grad_h_t;          // Gradient taking mode into account
+  Vec val_vec;           // Vector of weighted log-likelihood evaluations for a single group
+  Scalar Fi;        // Derivative of g with respect to L; F_ij = dg/dL_ij
+  Mat W_L;       // Intermediate weight matrix to be summed to give F
+  Mat W_u;       // Intermediate weight matrix to be summed to give dg/du; also storage for gradients
+  Vec zA;        // Adapted quadrature points
+  int kd;
+  
+public:
+  Vec raw_sd; 
+  Vec uhat;
+  scalarmargloglikgamm(scalarmodelgamm& modelobj_, const Vec& nn_, const Vec& ww_) : modelobj(modelobj_), nn(nn_), ww(ww_) {
+    Li = 0.;
+    kd = ww.size();
+    
+    aghqgrad.setZero(modelobj.st);
+    aghqgradperturb.setZero(modelobj.st);
+    aghqthetaperturb.setZero(modelobj.st);
+    aghqstep.setZero(modelobj.st);
+    aghqhess.setZero(modelobj.st,modelobj.st);
+    
+    zA.setZero(kd);
+    grad_h_L.setZero(modelobj.st);
+    grad_h_ut_noL.setZero(modelobj.p);
+    grad_h_ut.setZero(modelobj.p);
+    grad_h_t.setZero(modelobj.st);
+    val_vec.setZero(kd); 
+    Fi = 0.;
+    W_L.setZero(kd,1);
+    W_u.setZero(kd,modelobj.p);
+
+    raw_sd.setZero(modelobj.st);
+    uhat.setZero(modelobj.n);
+  }
+  // getters
+  Mat get_hessian() {
+    return aghqhess;
+  }
+  // wald intervals
+  void compute_all_sd() {
+    // compute the sd for wald intervals for raw and transformed params
+    Mat covmatfull = -aghqhess.inverse();
+    raw_sd = covmatfull.diagonal().cwiseSqrt();
+    // Note: don't need special computations for the variance components, since
+    // there is now only delta = log(1/sigma^2) so can just return Wald
+    // intervals via transformation
+  }
+  Scalar operator()(const Vec& theta,Vec& grad) {
+    // Overwrite grad with gradient at theta
+    // Return negative log likelihood
+    evalcount++;
+    Scalar loglik = 0., loglik_tmp = 0., logdet = 0., quadform = 0.;
+    Vec Sbeta(modelobj.beta.size());
+    grad.setZero();
+    Sbeta.setZero();
+    /** Set modelobj parameters **/
+    modelobj.set_params(theta);
+
+    /** Loop over i **/
+    bool verbose = false;
+    for (int i=0;i<modelobj.n;i++) {
+      loglik_tmp = 0.;
+      modelobj.inner_optimize_i(i,verbose);
+      uhat(i) = modelobj.u;
+      // Hessian
+      modelobj.hess_i(i,false);
+      Li = sqrt(modelobj.hess(0,0));
+      // Third derivatives
+      modelobj.dHuu_i(i);
+      loglik_tmp = 0.;
+
+      // Adaptation
+      zA = nn.array() / Li;
+      zA.array() += modelobj.u;
+
+      // Loop over quadrature points
+      val_vec.setZero();
+      W_L.setZero();
+      for (int j=0;j<kd;j++) {
+        // Joint log-likelihood and gradient evaluation
+        modelobj.loglik_grad_i(i,zA(j));
+        val_vec(j) = -modelobj.nll + log(ww(j)) - log(Li);
+        W_u.row(j) = -modelobj.grad;
+        // "Cholesky" gradient
+        W_L(j,0) = -(1/Li) - W_u(j,0) * nn(j) / (Li*Li);
+      }
+      // Log-likelihood, for scaling
+      loglik_tmp = logsumexp(val_vec);
+      loglik -= loglik_tmp; // negative log-likelihood
+      /** Collate **/
+      grad_h_ut_noL = vector_sumexp(W_u,val_vec);
+      // get_L_from_vector(Fi,vector_sumexp(W_L,val_vec));
+      // grad_h_L = dgdtheta(Li,Fi,modelobj.dHuu);
+      Fi = vector_sumexp(W_L,val_vec)(0);
+      grad_h_L = Fi * modelobj.dHuu.array() / (2*Li);
+      grad_h_ut = grad_h_L + grad_h_ut_noL;
+      /** Mode derivative **/
+      grad_h_t = grad_h_ut.segment(modelobj.d,modelobj.st) - (modelobj.hess.block(0,modelobj.d,modelobj.d,modelobj.st).transpose()) * (grad_h_ut.segment(0,modelobj.d)) / Li;
+      // grad_h_t = grad_h_ut.segment(modelobj.d,modelobj.st) + (LLt.solve(-modelobj.hess.block(0,modelobj.d,modelobj.d,modelobj.st)).transpose()) * (grad_h_ut.segment(0,modelobj.d));
+      /** Scaling by marginal likelihood **/
+      grad += -grad_h_t * exp(-loglik_tmp);
+    }
+    // Add on the part for beta^T S beta
+    Sbeta = modelobj.S * modelobj.beta;
+    quadform = Sbeta.dot(modelobj.beta);
+    grad.segment(0, Sbeta.size()) += 2. * Sbeta;
+    return loglik + quadform;
+  }
+  // Numeric hessian by forward difference
+  void numerichessian(Vec& theta) {
+    // hessian of aghq log likelihood via finite difference
+    
+    // evaluate loglikelihood and gradient
+    aghqnll = (*this)(theta,aghqgrad);
+    // compute the hessian
+    aghqgradperturb.setZero();
+    aghqhess.setZero();
+    for (int j=0;j<theta.size();j++) {
+      // Perturb in the jth dimension
+      aghqthetaperturb = theta;
+      aghqthetaperturb(j) += modelobj.h;
+      // Evaluate the gradient
+      aghqnll = (*this)(aghqthetaperturb,aghqgradperturb);
+      aghqhess.col(j) = (aghqgrad-aghqgradperturb)/modelobj.h;
+    }
+  }
+  // Newton step
+  void aghqnewtonstep(Vec& aghqstep, Vec& theta) {
+    // overwrite aghqstep
+    
+    // evaluate the hessian and gradient
+    numerichessian(theta);
+    // overwrite the step
+    aghqstep = aghqhess.ldlt().solve(aghqgrad); // NEGATIVE hessian --> NEGATIVE gradient!!
+  }
+  // Newton optimization
+  void aghqnewton(Vec& theta) {
+    // overwrite theta with theta-hat
+    int itr=0;	
+    while(true) {
+      // compute the step
+      aghqnewtonstep(aghqstep,theta);
+      // step halving
+      while(aghqstep.norm()>GLOBAL_MAXSTEP) aghqstep /= 2.; 
+      theta += aghqstep;
+      if (aghqgrad.norm() < modelobj.tol | itr > modelobj.maxitr) break;
+      itr++;
+    }
+  }
+}; 
+
+/**
+ * Main function for generalized additive mixed models
+ * Read in data from R, perform the computations,
+ * and return results in a list.
+ */
+//' Fit an AGHQ model via L-BFGS optimization
+//' 
+//' This function is a C++ implementation of the exact gradient-based optimization
+//' of the AGHQ approximate log-marginal likelihood in a binary mixed model with 
+//' scalar random intercepts. This is a special, efficient implementation of the general procedure
+//' for multivariate Normal random effects; see below.
+//' 
+//' @param theta Starting value for the outer parameter, containing regression
+//' coefficients and variance components on the log-Cholesky scale.
+//' @param y A \code{std::vector} of length \code{m} \code{Eigen} vectors of lengths \code{m_i},
+//' containing the responses: one vector of within-group observations per group.
+//' @param X A \code{std::vector} of length \code{m} \code{Eigen} matrices of dimensions \code{m_i x p},
+//' representing the design matrices for the fixed effects variables.
+//' @param nn An \code{Eigen} vector of length \code{k} containing the univariate quadrature nodes.
+//' @param ww An \code{Eigen} vector of length \code{k} containing the univariate quadrature weights.
+//' @param control a \code{List} containing control arguments.
+//' 
+//' @family optimizeaghqmm
+// [[Rcpp::export]]
+List optimizegammscalar(
+    Vec theta,          // Initial guess for theta
+    std::vector<Vec> y, // Response, list, one vector per group
+    std::vector<Mat> X, // Fixed effects covariates, list, one matrix per group
+    Mat S,              // Smoothing penalty matrix (already multiplied by smoothing parameter)
+    Vec nn,             // Matrix of base quadrature nodes
+    Vec ww,             // Matrix of base quadrature weights
+    List control                    // List of control parameters   
+) {
+  // Extract control arguments
+  /* Control arguments:
+   * tol: tolerance for outer BFGS optimization
+   * inner_tol: tolerance for inner newton optimization
+   * maxitr: maximum iterations of outer BFGS optimization
+   * inner_maxitr: maximum iterations of inner Newton optimization
+   * bfgshist: number of iterations of gradient information to store for Hessian approximation
+   * delta: convergence parameter for function change
+   * past: number of iterations to compare againt for function change convergence
+   * max_linesearch: maximum number of line search iterations
+   */
+  Scalar tol       = control["tol"];
+  Scalar inner_tol = control["inner_tol"];                         // Tolerance for the inner optimization
+  int inner_maxitr = control["inner_maxitr"];                // Maximum number of iterations for the inner optimization 
+  String method    = control["method"];
+  
+  // Set up the model object
+  int sb = X[0].cols(), d = 1, st = theta.size();
+  int sp = st - (d+sb);
+  // initial u
+  Scalar u = 0.;
+  scalarmodelgamm modelobj(y, X, S, control, u, theta.segment(0, sb), theta(sb));
+  
+
+  // Set up the optimization object
+  scalarmargloglikgamm nll(modelobj, nn, ww);
+  Vec grad(theta.size());
+  grad.setZero();
+  
+  // Allow for just the gradient and negative log likelihood computation
+  bool onlynllgrad = control["onlynllgrad"];
+  if (onlynllgrad) {
+    Scalar nllval = nll(theta,grad);
+    return List::create(Named("theta") = theta,Named("nll") = nllval,Named("grad") = grad);
+  }
+
+  /**
+   * OPTIMIZATION
+   * Newton or L-BFGS
+   */
+  Scalar val=0.;
+  // Newton
+  if (method == "newton") {
+    nll.aghqnewton(theta);
+    val = nll(theta,grad);
+  } else {
+    LBFGSParam<Scalar> param;
+    param.m = control["bfgshist"];
+    param.delta = control["bfgsdelta"];
+    param.past = control["past"];
+    param.epsilon = control["tol"];
+    param.max_iterations = control["maxitr"];
+    param.max_linesearch = control["max_linesearch"];
+    param.ftol = control["ftol"];
+    param.wolfe = control["wolfe"];
+    LBFGSSolver<Scalar,LineSearchNocedalWright> solver(param);
+
+    // Run the minimization
+    int niter = solver.minimize(nll, theta, val);
+    val = nll(theta,grad);
+    if (method == "both" && (grad.lpNorm<Eigen::Infinity>() > tol)) {
+      // Now compute the newton steps
+      nll.aghqnewton(theta);
+      val = nll(theta,grad);
+    } else {
+      // compute the FD hessian
+      nll.numerichessian(theta);
+    }
+  }
+  /** END OPTIMIZATION **/
+
+  // WALD Confidence intervals
+  nll.compute_all_sd();
+  Eigen::Matrix<Scalar,Eigen::Dynamic,3> waldints(theta.size(),3);
+  waldints.col(0) = theta - 2*nll.raw_sd;
+  waldints.col(1) = theta;
+  waldints.col(2) = theta + 2*nll.raw_sd;
+  
+  // Variance components
+  Vec waldintsvarcomp(3);
+  // theta(st) = log(1/sigma^2)
+  // sigma^2 = exp(-theta(st))
+  waldintsvarcomp(1) = exp(-theta(st-1));
+  waldintsvarcomp(2) = exp(-(theta(st-1) - 2*nll.raw_sd(st-1)));
+  waldintsvarcomp(0) = exp(-(theta(st-1) + 2*nll.raw_sd(st-1)));
+  
+  return List::create(Named("method") = method,
+                      Named("theta") = theta,
+                      Named("H") = -nll.get_hessian(),
+                      Named("betaints") = waldints.block(0,0,X[0].cols(),waldints.cols()),
+                      Named("sigmaints") = waldintsvarcomp,
+                      Named("nll") = val,
+                      Named("grad") = grad,
+                      Named("uhat") = nll.uhat
+  );
+}

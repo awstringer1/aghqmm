@@ -30,6 +30,7 @@ for multivariate Normal random effects; see below.
 }
 \seealso{
 Other optimizeaghqmm: 
-\code{\link{optimizeaghq}()}
+\code{\link{optimizeaghq}()},
+\code{\link{optimizegammscalar}()}
 }
 \concept{optimizeaghqmm}
